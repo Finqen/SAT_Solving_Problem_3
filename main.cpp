@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 #include <map>
+#include <set>
 #include <unordered_set>
 #include <unordered_map>
 #include <ctime>
@@ -26,10 +27,10 @@ int COUNTER = 0;
 /* Namespace to define variations of algorithms that bundles names as access points */
 namespace Algorithm {
     enum Version {
-        DEFAULT, HEU_LIT, NO_PREP
+        DEFAULT, HEU_LIT, NO_AUT
     };
     // All: Contains all variants
-    static const Version All[] = {DEFAULT, HEU_LIT};
+    static const Version All[] = {DEFAULT, NO_AUT, HEU_LIT};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
 
@@ -40,6 +41,8 @@ namespace Algorithm {
                 return "Heuristic Variables";
             case HEU_LIT:
                 return "Heuristic Literals";
+            case NO_AUT:
+                return "Not Autartic";
             default:
                 return "Something went wrong?!";
         }
@@ -70,17 +73,20 @@ void printVectorOfVectors(const vector<vector<int>> &vector) { /* Prints a vecto
 struct ImplicationGraph {
     struct Node {
         unsigned int level;
-        vector<int> edges = {};
+        vector<int> edges;
 
-        explicit Node(unsigned int level) { this->level = level; }
+        explicit Node(unsigned int level, vector<int> edges = {}) {
+            this->level = level;
+            this->edges = std::move(edges);
+        }
     };
 
     unsigned int level_index = 0;
     unordered_map<int, Node *> nodes;
-    vector<vector<int>> original_cnf;
-    vector<vector<int>> conflict_clauses = {};
+    vector<vector<int>> originalCNF;
+    set<vector<int>> conflictCNF;
 
-    explicit ImplicationGraph(vector<vector<int>> original_cnf) { this->original_cnf = std::move(original_cnf); }
+    explicit ImplicationGraph(vector<vector<int>> original_cnf) { this->originalCNF = std::move(original_cnf); }
 
     int getSize() const { return nodes.size(); }
 
@@ -89,16 +95,31 @@ struct ImplicationGraph {
     }
 
     void addImplication(int literal, const vector<int> &implication) {
-        nodes[literal] = new Node(level_index);
+        unsigned int max_level = 0;
+        vector<int> implications = {};
         // Makes sure the literal itself is not contained in the implication.
+        // Also, get the highest implication level.
         for (auto i : implication) {
-            if (i != literal)
-                nodes[literal]->edges.push_back(i);
+            if (i == literal)
+                continue;
+            implications.push_back(i);
         }
+        nodes[literal] = new Node(max_level, implications);
     }
 
-    void handleWrongGuess(int v) {
-
+    // When adding a new solution results in UNSAT, this function is called.
+    void addConflictClause(int literal) {
+        Node *node = nodes[literal];
+        // Find basic cut
+        // TODO: Find more cuts, e.g using heuristics
+        vector<int> cc = node->edges;
+        // Negate all literals
+        std::transform(cc.begin(), cc.end(), cc.begin(), [](auto &v) { return -1 * v; });
+        if (cc.empty())
+            cc.push_back(-literal);
+        // Add conflict clause
+        // TODO: Check if clause is asserting!
+        conflictCNF.insert(cc);
     }
 };
 
@@ -123,11 +144,10 @@ struct Data {
     bool unsat = false;
     Algorithm::Version algorithm;
 
-    /* Constructor for the data structure. */
-    explicit Data(const vector<vector<int>> &cnf, ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
-        this->implicationGraph = implicationGraph;
-        this->cnf = cnf;
-        this->algorithm = algorithm;
+    void updateClauseInformation() {
+        clausesRemaining.clear();
+        literalToClause.clear();
+        unassignedVars.clear();
         for (int i = 0; i < cnf.size(); ++i) {
             clausesRemaining.push_back(i);
             for (auto v : cnf[i]) {
@@ -135,6 +155,14 @@ struct Data {
                 this->literalToClause[v].push_back(i);
             }
         }
+    }
+
+/* Constructor for the data structure. */
+    explicit Data(const vector<vector<int>> &cnf, ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
+        this->implicationGraph = implicationGraph;
+        this->cnf = cnf;
+        this->algorithm = algorithm;
+        updateClauseInformation();
     }
 
     /* Returns true if unsat or sat.
@@ -192,10 +220,11 @@ struct Data {
         literalToClause[v].clear();
 
         /////////// Update implication graph ///////////
-        if (!unsat && !implied)
+        if (!implied)
             implicationGraph->addSolutionGuess(v);
-        else if (unsat)
-            implicationGraph->handleWrongGuess(v);
+        if (unsat) {
+            implicationGraph->addConflictClause(v);
+        }
         ////////////////////////////////////////////////
     }
 
@@ -241,6 +270,19 @@ struct Data {
         sort(cnf[a].begin(), cnf[a].end());
         cnf[a].erase(unique(cnf[a].begin(), cnf[a].end()), cnf[a].end());
     }
+
+    // Adds the conflict clauses from the implication graph and updates information accordingly
+    void applyConflictClauses() {
+        auto conflictCNF = implicationGraph->conflictCNF;
+        std::vector v( conflictCNF.begin(), conflictCNF.end() );
+        //printVectorOfVectors(v);
+        implicationGraph->conflictCNF.clear();
+        auto newCNF = getRemainingClauses();
+        newCNF.insert(newCNF.end(), conflictCNF.begin(), conflictCNF.end());
+        cnf = newCNF;
+        updateClauseInformation();
+    }
+
 };
 
 /* Eliminates clauses that contain both, a variable and its negation, in the same clause. */
@@ -317,7 +359,7 @@ void removeUnitClauses(Data *data) {
     for (auto i : cnf)
         if (data->cnf[i].size() == 1) {
             int literal = data->cnf[i][0];
-            vector<int> &cnf_orig = data->implicationGraph->original_cnf[i];
+            vector<int> &cnf_orig = data->implicationGraph->originalCNF[i];
             // We must check if the original clause was a unit clause.
             // If so, we do not want to generate implications.
             bool implied = cnf_orig.size() > 1;
@@ -506,7 +548,7 @@ vector<vector<int>> sortUnsatClausesVariables(Data *data, int order = -1) {
 }
 
 /* Here, the number of variable (not literal) occurrence is of importance! */
-int heuristic_var(Data *data, int order = 1) {
+int heuristicVar(Data *data, int order = 1) {
     vector<int> cnf(data->unassignedVars.begin(), data->unassignedVars.end());
     sort(cnf.begin(), cnf.end(), [&data, &order](int x, int y) {
         int a = data->getLiteralCount(x);
@@ -522,7 +564,7 @@ int heuristic_var(Data *data, int order = 1) {
 }
 
 /* Here, the number of literal (not variable) occurrence is of importance! */
-int heuristic_lit(Data *data, int order = 1) {
+int heuristicLit(Data *data, int order = 1) {
     vector<int> cnf(data->unassignedVars.begin(), data->unassignedVars.end());
     sort(cnf.begin(), cnf.end(), [&data, &order](int x, int y) {
         int a = data->getLiteralCount(x);
@@ -561,34 +603,36 @@ Data solveSAT(Data data) {
     vector<vector<int>> cnf;
 
     //////////////////////////  AUTARKIC CLAUSES TRICK  //////////////////////////
-    cnf = sortUnsatClausesVariables(&data);
-    vector<int> nextClause = getSmallestClause(cnf);
-    vector<unordered_set<int>> ys;
-    for (int i = 0; i < nextClause.size(); ++i) {
-        unordered_set<int> assignmentNew = {};
-        assignmentNew.insert(nextClause[i]);
-        for (int j = 0; j < i; ++j)
-            assignmentNew.insert(-nextClause[j]);
-        if (isAutarkic(cnf, assignmentNew)) {
-            data.addSolutions(assignmentNew);
-            return solveSAT(data);
+    if (data.algorithm != Algorithm::Version::NO_AUT) {
+        cnf = sortUnsatClausesVariables(&data);
+        vector<int> nextClause = getSmallestClause(cnf);
+        for (int i = 0; i < nextClause.size(); ++i) {
+            unordered_set<int> assignmentNew = {};
+            assignmentNew.insert(nextClause[i]);
+            for (int j = 0; j < i; ++j)
+                assignmentNew.insert(-nextClause[j]);
+            if (isAutarkic(cnf, assignmentNew)) {
+                data.addSolutions(assignmentNew);
+                return solveSAT(data);
+            }
         }
-        ys.push_back(assignmentNew);
     }
     ////////////////////////// CORE ALGORITHM  //////////////////////////
     if (!data.unassignedVars.empty()) {
         // Heuristics
         int v;
         if (data.algorithm == Algorithm::Version::HEU_LIT)
-            v = heuristic_lit(&data);
+            v = heuristicLit(&data);
         else
-            v = heuristic_var(&data);
+            v = heuristicVar(&data);
         // Branching
         for (const auto &y : {1, -1}) {
             Data d = data;
             d.addSolution(v * y);
-            if (d.unsat)
+            if (d.unsat) {
+                data.applyConflictClauses();
                 continue;
+            }
             d = solveSAT(d);
             if (!d.unsat && d.clausesRemaining.empty())
                 return d;
