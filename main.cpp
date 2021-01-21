@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iterator>
 #include <sstream>
+#include <utility>
 #include <vector>
 #include <map>
 #include <unordered_set>
@@ -28,19 +29,13 @@ namespace Algorithm {
         DEFAULT, HEU_LIT, NO_PREP
     };
     // All: Contains all variants
-    // Keep in mind that using "no preprocessing" might result in notably horrific runtime.
-    static const Version All[] = {DEFAULT, HEU_LIT, NO_PREP};
+    static const Version All[] = {DEFAULT, HEU_LIT};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
-    // Contains variants that use pre-processing
-    static const Version WithPP[] = {DEFAULT, HEU_LIT};
-
 
     // Return a more informative string if needed.
     string getVersionName(enum Version algorithm) {
         switch (algorithm) {
-            case NO_PREP:
-                return "No preprocessing";
             case DEFAULT:
                 return "Heuristic Variables";
             case HEU_LIT:
@@ -67,6 +62,46 @@ void printVectorOfVectors(const vector<vector<int>> &vector) { /* Prints a vecto
     cout << endl;
 }
 
+/*
+ * Implication graph.
+ * Here we define the data structure (and its respective operations) for the implication graph.
+ * Each Node stores an edge list of implications.
+ */
+struct ImplicationGraph {
+    struct Node {
+        unsigned int level;
+        vector<int> edges = {};
+
+        explicit Node(unsigned int level) { this->level = level; }
+    };
+
+    unsigned int level_index = 0;
+    unordered_map<int, Node *> nodes;
+    vector<vector<int>> original_cnf;
+    vector<vector<int>> conflict_clauses = {};
+
+    explicit ImplicationGraph(vector<vector<int>> original_cnf) { this->original_cnf = std::move(original_cnf); }
+
+    int getSize() const { return nodes.size(); }
+
+    void addSolutionGuess(int literal) {
+        nodes[literal] = new Node(++level_index);
+    }
+
+    void addImplication(int literal, const vector<int> &implication) {
+        nodes[literal] = new Node(level_index);
+        // Makes sure the literal itself is not contained in the implication.
+        for (auto i : implication) {
+            if (i != literal)
+                nodes[literal]->edges.push_back(i);
+        }
+    }
+
+    void handleWrongGuess(int v) {
+
+    }
+};
+
 /**
  * The main data structure used to encode the SAT problem.
  * cnf: stores a CNF in form of a list of lists.
@@ -79,6 +114,7 @@ void printVectorOfVectors(const vector<vector<int>> &vector) { /* Prints a vecto
  */
 struct Data {
     vector<vector<int>> cnf;
+    ImplicationGraph *implicationGraph;
     vector<int> clausesRemaining;
     unordered_set<int> assignedVars;
     unordered_set<int> unassignedVars;
@@ -88,7 +124,8 @@ struct Data {
     Algorithm::Version algorithm;
 
     /* Constructor for the data structure. */
-    explicit Data(const vector<vector<int>> &cnf, Algorithm::Version algorithm) {
+    explicit Data(const vector<vector<int>> &cnf, ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
+        this->implicationGraph = implicationGraph;
         this->cnf = cnf;
         this->algorithm = algorithm;
         for (int i = 0; i < cnf.size(); ++i) {
@@ -132,7 +169,7 @@ struct Data {
     }
 
     /* Adds a literal to the solution list, i.e assigns a ground-truth to a variable. */
-    void addSolution(int v) {
+    void addSolution(int v, bool implied = false) {
         unassignedVars.erase(abs(v));
         assignedVars.insert(v);
         //Remove satisfied clauses.
@@ -153,6 +190,13 @@ struct Data {
         }
         literalToClause[-v].clear();
         literalToClause[v].clear();
+
+        /////////// Update implication graph ///////////
+        if (!unsat && !implied)
+            implicationGraph->addSolutionGuess(v);
+        else if (unsat)
+            implicationGraph->handleWrongGuess(v);
+        ////////////////////////////////////////////////
     }
 
     /* Adds multiple literals to the solution list, i.e assigns ground-truths to variables. */
@@ -265,13 +309,22 @@ vector<vector<int>> to3SAT(const vector<vector<int>> &cnf) {
     return threeSat;
 }
 
-/* Removes clauses that contain only one literal and assigns those as solutions. */
+/* Removes clauses that contain only one literal and assigns those as solutions.
+ * This also adds edges to the implication graph. */
 void removeUnitClauses(Data *data) {
     // cout << "Determining and removing unit clauses and literals." << endl;
     vector<int> cnf(data->clausesRemaining);
     for (auto i : cnf)
-        if (data->cnf[i].size() == 1)
-            data->addSolution(data->cnf[i][0]);
+        if (data->cnf[i].size() == 1) {
+            int literal = data->cnf[i][0];
+            vector<int> &cnf_orig = data->implicationGraph->original_cnf[i];
+            // We must check if the original clause was a unit clause.
+            // If so, we do not want to generate implications.
+            bool implied = cnf_orig.size() > 1;
+            if (implied)
+                data->implicationGraph->addImplication(literal, cnf_orig);
+            data->addSolution(literal, implied);
+        }
 }
 
 /* Determines and removes pure literals from clauses, and respectively includes those as solutions. */
@@ -489,24 +542,24 @@ Data solveSAT(Data data) {
     if (data.canAbort())
         return data;
     COUNTER++;
-    //cout << "SAT-Solving via the \"MonienSpeckenmeyer\" algorithm." << endl;
     /// PRE-FILTERING:
-    if (data.algorithm != Algorithm::Version::NO_PREP) {
-        ////////////////////////// REMOVE PURE LITERALS //////////////////////////
-        eliminateTautologies(&data);
-        ////////////////////////// REMOVE PURE LITERALS //////////////////////////
-        removePureLiterals(&data);
-        ////////////////////////// REMOVE UNIT CLAUSES ///////////////////////////
-        removeUnitClauses(&data);
-        ////////////////////////// PERFORM RESOLUTION RULE ///////////////////////
-        performResolutionRule(&data);
-        ////////////////////////// REMOVE SUBSUMED THREE CLAUSES ///////////////////////
-        removeSubsumedClauses(&data);
-    }
-    ////////////////////////// CORE ALGORITHM  //////////////////////////
+    ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
+    eliminateTautologies(&data);
+    ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
+    removePureLiterals(&data);
+    ////////////////////////// PERFORM RESOLUTION RULE ////////////////////////////
+    performResolutionRule(&data);
+    ////////////////////////// REMOVE SUBSUMED THREE CLAUSES //////////////////////
+    removeSubsumedClauses(&data);
+    ////////////////////////// REMOVE UNIT CLAUSES ///////////////////////////////
+    /* Must be last as we determine here conflict clauses! */
+    removeUnitClauses(&data);
+    //////////////////////////////////////////////////////////////////////////////
+
     if (data.canAbort())
         return data;
     vector<vector<int>> cnf;
+
     //////////////////////////  AUTARKIC CLAUSES TRICK  //////////////////////////
     cnf = sortUnsatClausesVariables(&data);
     vector<int> nextClause = getSmallestClause(cnf);
@@ -522,14 +575,15 @@ Data solveSAT(Data data) {
         }
         ys.push_back(assignmentNew);
     }
-    /////////////////////// HEURISTIC //////////////////////////
+    ////////////////////////// CORE ALGORITHM  //////////////////////////
     if (!data.unassignedVars.empty()) {
+        // Heuristics
         int v;
         if (data.algorithm == Algorithm::Version::HEU_LIT)
             v = heuristic_lit(&data);
         else
             v = heuristic_var(&data);
-        /////////////////////// CONTINUE ALGORITHM //////////////////////////
+        // Branching
         for (const auto &y : {1, -1}) {
             Data d = data;
             d.addSolution(v * y);
@@ -542,7 +596,7 @@ Data solveSAT(Data data) {
     }
     data.unsat = true;
     data.assignedVars.clear();
-    return data; //UNSAT
+    return data; // UNSAT
 }
 
 /* Starts the recursive sat-solver calls and sotres data accordingly in files. */
@@ -556,7 +610,8 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     const unordered_set<int> &origVars = getVariables(cnf);
     //cout << "Clauses: " << cnf.size() << " | " << "Vars: " << origVars.size() << endl;
     //cnf = to3SAT(cnf); //Worsens performance!
-    Data data = Data(cnf, algorithm);
+    ImplicationGraph implicationGraph = ImplicationGraph(cnf);
+    Data data = Data(cnf, &implicationGraph, algorithm);
     /////////
     COUNTER = 0;
     data = solveSAT(data);
@@ -617,8 +672,9 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     cout << "[Steps: " << COUNTER << "] ";
     textFileSteps << "," << COUNTER;
 
-    printf("[Execution time: %.2fs]\n", (double) (clock() - tStart) / CLOCKS_PER_SEC);
-    cout << "=====================================" << endl;
+    printf("[Execution time: %.2fs]", (double) (clock() - tStart) / CLOCKS_PER_SEC);
+    cout << " [Graph size: " << data.implicationGraph->getSize() << "] " << endl;
+    cout << "==================================================" << endl;
     unordered_set<int> solutionCheck(solution.begin(), solution.end());
     return data.unsat ||
            (verifySolution(cnf, solutionCheck) && removeSatisfiedClauses(cnf, solutionCheck).empty());
