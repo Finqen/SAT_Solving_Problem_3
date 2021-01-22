@@ -76,6 +76,9 @@ struct Clause {
     }
 };
 
+// We need this to generate a set of Clauses.
+bool operator<(const Clause &c1, const Clause &c2) { return c1.clause < c2.clause; }
+
 /*
  * Implication graph.
  * Here we define the data structure (and its respective operations) for the implication graph.
@@ -118,20 +121,17 @@ struct ImplicationGraph {
 
     // When adding a new solution results in UNSAT, this function is called.
     void addConflictClause(int literal) {
-        /*
         Node *node = nodes[literal];
         // Find basic cut
         // TODO: Find more cuts, e.g using heuristics
         vector<int> cc = node->edges;
-        /*
         unsigned int asserting = 0;
         // Check if clause is asserting!
         for (auto v : cc) {
-            //std::cout << v << " " << nodes[v]->level << std::endl;
-            //if (nodes[v]->level == level_index)
-            //    asserting += 1;
+            if (nodes[v]->level == level_index)
+                asserting += 1;
         }
-        //Check if there is only one maximum_branch level index
+        //Check if there is only one maximum_branch level index (i.e if clause is asserting).
         if (asserting != 1)
             return;
         // Negate all literals
@@ -140,7 +140,6 @@ struct ImplicationGraph {
             cc.push_back(-literal);
         // Add conflict clause
         conflictClauses.insert(Clause(cc));
-        */
     }
 };
 
