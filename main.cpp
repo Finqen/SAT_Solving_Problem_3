@@ -21,7 +21,7 @@ using namespace std;
 ofstream textFileTimes;
 ofstream textFileSteps;
 ofstream solutionFile;
-int COUNTER = 0;
+unsigned int COUNTER = 0;
 // const auto MAX_THREADS = thread::hardware_concurrency();
 
 /* Namespace to define variations of algorithms that bundles names as access points */
@@ -79,34 +79,56 @@ struct Clause {
 // We need this to generate a set of Clauses.
 bool operator<(const Clause &c1, const Clause &c2) { return c1.clause < c2.clause; }
 
+/* Removes clauses which are satisfied by a given assignment (alpha). */
+vector<Clause> removeSatisfiedClauses(const vector<Clause> &cnf, unordered_set<int> alpha) {
+    vector<Clause> filteredCnf;
+    for (const Clause &c : cnf) {
+        bool remove = false;
+        for (int v : c.clause) {
+            if (alpha.find(v) != alpha.end()) {
+                remove = true;
+                break;
+            }
+        }
+        if (!remove)
+            filteredCnf.push_back(c);
+    }
+    // cout << "Done! (Clauses old: " << cnf.size() << " | Clauses new: " << filteredCnf.size() << ")." << endl;
+    return filteredCnf;
+}
+
+/** Entry node for the ImplicationGraph. */
+struct Node {
+    int literal;
+    unsigned int level;
+    vector<int> edges;
+
+    explicit Node(int literal, unsigned int level, vector<int> edges = {}) {
+        this->literal = literal;
+        this->level = level;
+        this->edges = std::move(edges);
+    }
+};
+
 /*
  * Implication graph.
  * Here we define the data structure (and its respective operations) for the implication graph.
  * Each Node stores an edge list of implications.
  */
 struct ImplicationGraph {
-    struct Node {
-        unsigned int level;
-        vector<int> edges;
-
-        explicit Node(unsigned int level, vector<int> edges = {}) {
-            this->level = level;
-            this->edges = std::move(edges);
-        }
-    };
-
-    unsigned int level_index = 0;
+    unsigned int levelIndex = 0;
     unordered_map<int, Node *> nodes;
     set<Clause> conflictClauses;
 
     int getSize() const { return nodes.size(); }
 
-    void addSolutionGuess(int literal) {
-        nodes[literal] = new Node(++level_index);
+    Node *addSolutionGuess(int literal) {
+        nodes[literal] = new Node(literal, ++levelIndex);
+        return nodes[literal];
     }
 
-    void addImplication(int literal, const vector<int> &cnf) {
-        unsigned int max_level = 0;
+    Node *addImplication(int literal, const vector<int> &cnf) {
+        unsigned int maxLevel = 0;
         vector<int> implications = {};
         // Makes sure the literal itself is not contained in the implication.
         // Also, get the highest implication level.
@@ -114,32 +136,42 @@ struct ImplicationGraph {
             if (abs(v) == abs(literal))
                 continue;
             implications.push_back(-v);
-            max_level = max(max_level, nodes[-v]->level);
+            maxLevel = max(maxLevel, nodes[-v]->level);
         }
-        nodes[literal] = new Node(max_level, implications);
+        nodes[literal] = new Node(literal, maxLevel, implications);
+        return nodes[literal];
     }
 
     // When adding a new solution results in UNSAT, this function is called.
-    void addConflictClause(int literal) {
+    // Return the "assertionLevel".
+    unsigned int handleConflictClause(int literal) {
         Node *node = nodes[literal];
         // Find basic cut
         // TODO: Find more cuts, e.g using heuristics
         vector<int> cc = node->edges;
         unsigned int asserting = 0;
+        unsigned int maxLevel = 0;
+        unsigned int assertionLevel = 0;
         // Check if clause is asserting!
         for (auto v : cc) {
-            if (nodes[v]->level == level_index)
+            if (nodes[v]->level == levelIndex)
                 asserting += 1;
+            unsigned int m = nodes[v]->level;
+            if (m > maxLevel) {
+                assertionLevel = maxLevel;
+                maxLevel = m;
+            }
         }
-        //Check if there is only one maximum_branch level index (i.e if clause is asserting).
+        //Check for asserting conflict clause.
         if (asserting != 1)
-            return;
+            return 0;
         // Negate all literals
         std::transform(cc.begin(), cc.end(), cc.begin(), [](auto &v) { return -1 * v; });
         if (cc.empty())
             cc.push_back(-literal);
         // Add conflict clause
         conflictClauses.insert(Clause(cc));
+        return assertionLevel;
     }
 };
 
@@ -160,9 +192,11 @@ struct Data {
     unordered_set<int> assignedVars;
     unordered_set<int> unassignedVars;
     stack<vector<int>> resolutions;
+    stack<Node *> solutionHistory;
     unordered_map<int, vector<int>> literalToClause;
     bool unsat = false;
     Algorithm::Version algorithm;
+    unsigned int assertionLevel = 0;
 
     void updateClauseInformation() {
         clausesRemaining.clear();
@@ -177,12 +211,40 @@ struct Data {
         }
     }
 
-/* Constructor for the data structure. */
+    /* Constructor for the data structure. */
     explicit Data(const vector<Clause> &cnf, ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
         this->implicationGraph = implicationGraph;
         this->cnf = cnf;
         this->algorithm = algorithm;
         updateClauseInformation();
+    }
+
+    /* Restores the original clauses+ */
+    void nonChronologicalBacktracking() {
+        for (Clause c : cnf)
+            c.clause = c.originalClause;
+
+        /*
+        while (!resolutions.empty())
+            resolutions.pop();
+
+        while (!solutionHistory.empty()) {
+            Node *node = solutionHistory.top();
+            if (node->level > assertionLevel) {
+                solutionHistory.pop();
+                assignedVars.erase(node->literal);
+            } else break;
+        }
+         */
+
+        unsat = false;
+        updateClauseInformation();
+
+        for (int i = 0; i < cnf.size(); ++i) {
+            applySolution(&cnf[i]);
+            if (!unsat && cnf[i].clause.empty())
+                discardClause(i);
+        }
     }
 
     /* Returns true if unsat or sat.
@@ -205,7 +267,30 @@ struct Data {
         return this->literalToClause[v].size();
     }
 
-    /* Removes a clause from the unsatisfied list, but updaes all parameters accordingly. */
+    /* Applies a solution to a clause (i.e removes potential negated literals). */
+    void applySolution(Clause *c) {
+        for (auto v : assignedVars) {
+            if (count(c->clause.begin(), c->clause.end(), v)) {
+                c->clause.clear();
+                return;
+            }
+            c->clause.erase(remove(c->clause.begin(), c->clause.end(), -v), c->clause.end());
+            if (c->clause.empty())
+                this->unsat = true; // UNSAT!!!!
+        }
+    }
+
+/* Add a new clause and update information accordingly. */
+    void addClause(Clause c) {
+        applySolution(&c);
+        cnf.emplace_back(c);
+        //Re-reference literals.
+        for (int v : c.clause) { literalToClause[v].push_back(cnf.size() - 1); }
+        if (unsat || !c.clause.empty())
+            clausesRemaining.push_back(cnf.size() - 1);
+    }
+
+    /* Removes a clause from the unsatisfied list, but updates all parameters accordingly. */
     void discardClause(int index) {
         clausesRemaining.erase(remove(clausesRemaining.begin(), clausesRemaining.end(), index),
                                clausesRemaining.end());
@@ -218,10 +303,14 @@ struct Data {
 
     /* Adds a literal to the solution list, i.e assigns a ground-truth to a variable. */
     void addSolution(int v, bool implied = false) {
+        // The counter keeps track on how many assignments we have done.
+        COUNTER++;
         unassignedVars.erase(abs(v));
         assignedVars.insert(v);
-        if (!implied)
-            implicationGraph->addSolutionGuess(v);
+        if (!implied) {
+            Node *node = implicationGraph->addSolutionGuess(v);
+            solutionHistory.push(node);
+        }
         //Remove satisfied clauses.
         vector<int> clauses(literalToClause[v]);
         for (auto i : clauses) {
@@ -242,7 +331,8 @@ struct Data {
         for (auto i : literalToClause[-v]) {
             if (cnf[i].clause.size() == 1) {
                 int v2 = cnf[i].clause.front();
-                implicationGraph->addImplication(v2, cnf[i].originalClause);
+                Node *node = implicationGraph->addImplication(v2, cnf[i].originalClause);
+                solutionHistory.push(node);
                 addSolution(v2, true);
             }
         }
@@ -251,7 +341,7 @@ struct Data {
         literalToClause[v].clear();
 
         if (unsat) {
-            implicationGraph->addConflictClause(v);
+            assertionLevel = max(assertionLevel, implicationGraph->handleConflictClause(v));
         }
     }
 
@@ -267,65 +357,53 @@ struct Data {
     void resolve(int literal) {
         vector<int> a_ = literalToClause[literal];
         int b = literalToClause[-literal][0];
+        // Check if "b" is tautology and if so, add "literal", NOT (!!) "-literal".
+        if (count(cnf[b].clause.begin(), cnf[b].clause.end(), literal)) {
+            addSolution(literal);
+            return;
+        }
         // Discard resolved clause.
         discardClause(b);
-        vector<int> resClause(cnf[b].clause);
         // Put the negated literal at the end of the vector (so we can access it easier later on).
-        resClause.erase(remove(resClause.begin(), resClause.end(), -literal), resClause.end());
-        resClause.push_back(-literal);
+        cnf[b].clause.erase(remove(cnf[b].clause.begin(), cnf[b].clause.end(), -literal), cnf[b].clause.end());
+        cnf[b].clause.push_back(-literal);
         // Add to the resolution history.
-        resolutions.push(resClause);
+        resolutions.push(cnf[b].clause);
         // Resolve clauses.
         for (int a : a_) {
+            discardClause(a);
             // Check if equal.
-            if (a == b) {
-                addSolution(abs(literal));
+            if (count(cnf[a].clause.begin(), cnf[a].clause.end(), -literal))
                 continue;
-            }
+            // Since we will be manipulating the original clause, field, add a copy of it to the cnf.
+            vector<int> newClause(cnf[a].clause);
             unassignedVars.erase(abs(literal));
             // Merge both clauses.
-            cnf[a].clause.insert(cnf[a].clause.end(), cnf[b].clause.begin(), cnf[b].clause.end());
-            //Re-reference literals.
-            for (int v : cnf[b].clause) {
-                if (!count(literalToClause[v].begin(), literalToClause[v].end(), a))
-                    literalToClause[v].push_back(a);
-            }
+            newClause.insert(newClause.end(), cnf[b].clause.begin(), cnf[b].clause.end());
             // Delete literals from resolved clause and the original clause.
-            cnf[a].clause.erase(remove(cnf[a].clause.begin(), cnf[a].clause.end(), literal), cnf[a].clause.end());
-            cnf[a].clause.erase(remove(cnf[a].clause.begin(), cnf[a].clause.end(), -literal), cnf[a].clause.end());
-            cnf[a].originalClause.erase(remove(cnf[a].originalClause.begin(), cnf[a].originalClause.end(), literal),
-                                        cnf[a].originalClause.end());
-            cnf[a].originalClause.erase(remove(cnf[a].originalClause.begin(), cnf[a].originalClause.end(), -literal),
-                                        cnf[a].originalClause.end());
-            // Clear literal(s).
-            literalToClause[literal].clear();
+            newClause.erase(remove(newClause.begin(), newClause.end(), literal), newClause.end());
+            newClause.erase(remove(newClause.begin(), newClause.end(), -literal), newClause.end());
             // Remove duplicates.
-            sort(cnf[a].clause.begin(), cnf[a].clause.end());
-            cnf[a].clause.erase(unique(cnf[a].clause.begin(), cnf[a].clause.end()), cnf[a].clause.end());
-            cnf[a].originalClause = cnf[a].clause;
-        }
-        // Check if the resolved rules are a tautology. We have to check this after resolving all clauses!
-        for (auto a :  a_) {
-            for (auto c : cnf[a].clause) {
-                if (count(cnf[a].clause.begin(), cnf[a].clause.end(), -c)) {
-                    addSolution(abs(c));
-                    break;
-                }
-            }
+            sort(newClause.begin(), newClause.end());
+            newClause.erase(unique(newClause.begin(), newClause.end()), newClause.end());
+            addClause(Clause(newClause));
         }
         // Clear literal(s).
         literalToClause[-literal].clear();
+        literalToClause[literal].clear();
     }
 
     // Adds the conflict clauses from the implication graph and updates information accordingly
     void applyConflictClauses() {
+        // TODO: THIS DOES NOT WORK!
+        return;
         auto conflictCNF = implicationGraph->conflictClauses;
         std::vector v(conflictCNF.begin(), conflictCNF.end());
         implicationGraph->conflictClauses.clear();
-        auto newCNF = getRemainingClauses();
-        newCNF.insert(newCNF.end(), conflictCNF.begin(), conflictCNF.end());
-        cnf = newCNF;
-        updateClauseInformation();
+        for (const auto &clause : conflictCNF) {
+            addClause(clause);
+        }
+        nonChronologicalBacktracking();
     }
 
 };
@@ -454,26 +532,6 @@ bool isAutarkic(const vector<Clause> &cnf, unordered_set<int> alpha) {
     }
     return true;
 }
-
-/* Removes clauses which are satisfied by a given assignment (alpha). */
-vector<Clause>
-removeSatisfiedClauses(const vector<Clause> &cnf, unordered_set<int> alpha) {
-    vector<Clause> filteredCnf;
-    for (const Clause &c : cnf) {
-        bool remove = false;
-        for (int v : c.clause) {
-            if (alpha.find(v) != alpha.end()) {
-                remove = true;
-                break;
-            }
-        }
-        if (!remove)
-            filteredCnf.push_back(c);
-    }
-    // cout << "Done! (Clauses old: " << cnf.size() << " | Clauses new: " << filteredCnf.size() << ")." << endl;
-    return filteredCnf;
-}
-
 
 /* We will use a third check/test to make sure that our solution is correct. Here, we scrutinize
  * whether the intersection of the solution and each clause is non-empty.
@@ -625,19 +683,17 @@ int heuristicLit(Data *data, int order = 1) {
 Data solveSAT(Data data) {
     if (data.canAbort())
         return data;
-    COUNTER++;
     /// PRE-FILTERING:
     ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
     eliminateTautologies(&data);
+    ////////////////////////// REMOVE UNIT CLAUSES (1) ///////////////////////////////
+    removeUnitClauses(&data);
     ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
     removePureLiterals(&data);
     ////////////////////////// PERFORM RESOLUTION RULE ////////////////////////////
     performResolutionRule(&data);
     ////////////////////////// REMOVE SUBSUMED THREE CLAUSES //////////////////////
     removeSubsumedClauses(&data);
-    ////////////////////////// REMOVE UNIT CLAUSES ///////////////////////////////
-    /* Must be last as we determine here conflict clauses! */
-    removeUnitClauses(&data);
     //////////////////////////////////////////////////////////////////////////////
 
     if (data.canAbort())
@@ -667,7 +723,10 @@ Data solveSAT(Data data) {
             v = heuristicLit(&data);
         else
             v = heuristicVar(&data);
-        // Branching
+        // NOTE: Since we are now using CDCL, we are not branching anymore.
+        // That is, we are using a non-chronological learning based on the assertion level of the clauses.
+        // That functionality is defined at !!!!"handleConflictClause"!!!!. The funcion below is basically only used
+        // for initialization and special case coverage (e.g when all cuts are non-asserting clauses).
         for (const auto &y : {1, -1}) {
             Data d = data;
             d.addSolution(v * y);
@@ -708,6 +767,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         for (int v : data.assignedVars)
             if (origVars.find(v) != origVars.end() || origVars.find(-v) != origVars.end())
                 solution.push_back(v);
+
         // Add resolved variables accordingly.
         while (!data.resolutions.empty()) {
             auto vec = data.resolutions.top();
@@ -794,8 +854,8 @@ int main() {
     vector<string> paths = getTestFiles("../inputs/test/sat");
     vector<string> paths2 = getTestFiles("../inputs/test/unsat");
     paths.insert(paths.end(), paths2.begin(), paths2.end());
-    // paths = getTestFiles("../inputs/test/more_complex_tests");
-    // paths = {"../inputs/test/unsat/subset6.cnf"};
+    paths = getTestFiles("../inputs/test/more_complex_tests");
+    // paths = {"../inputs/sat/aim-100-1_6-yes1-2.cnf"};
     // paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
     // paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
     bool correct = true;
@@ -805,15 +865,20 @@ int main() {
         textFileSteps << "," << i;
     }
 
+    unsigned int stepsTotal = 0;
     for (const auto algorithm : Algorithm::Default) {
         textFileTimes << "\n" << Algorithm::getVersionName(algorithm);
         textFileSteps << "\n" << Algorithm::getVersionName(algorithm);
-        for (const auto &path : paths)
+        for (const auto &path : paths) {
             correct = correct && solveDimacs(path, algorithm);
+            stepsTotal += COUNTER;
+        }
     }
 
     textFileTimes.close();
     textFileSteps.close();
+
+    cout << "=> Total steps: " << stepsTotal << ".\n";
     // Here we can double check if our solution is actually true, if not, print it!
     // We can do that by feeding in the solution ot the entire CNF and see if it solves it.
     if (!correct)
