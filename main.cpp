@@ -266,43 +266,56 @@ struct Data {
      * Assumes the literal and its negation occur both exactly once.
      */
     void resolve(int literal) {
-        int a = literalToClause[literal][0];
+        vector<int> a_ = literalToClause[literal];
         int b = literalToClause[-literal][0];
-        // Check if equal.
-        if (a == b) {
-            addSolution(abs(literal));
-            return;
-        }
-        unassignedVars.erase(abs(literal));
-        // Merge both clauses.
-        cnf[a].clause.insert(cnf[a].clause.end(), cnf[b].clause.begin(), cnf[b].clause.end());
-        cnf[a].originalClause.insert(cnf[a].originalClause.end(), cnf[b].originalClause.begin(),
-                                     cnf[b].originalClause.end());
-        // Discard one of them.
+        // Discard resolved clause.
         discardClause(b);
-        //Re-reference literals.
-        for (int v : cnf[b].clause) {
-            if (!count(literalToClause[v].begin(), literalToClause[v].end(), a))
-                literalToClause[v].push_back(a);
-        }
+        vector<int> resClause(cnf[b].clause);
         // Put the negated literal at the end of the vector (so we can access it easier later on).
-        cnf[b].clause.erase(remove(cnf[b].clause.begin(), cnf[b].clause.end(), -literal), cnf[b].clause.end());
-        cnf[b].clause.push_back(-literal);
+        resClause.erase(remove(resClause.begin(), resClause.end(), -literal), resClause.end());
+        resClause.push_back(-literal);
         // Add to the resolution history.
-        resolutions.push(cnf[b].clause);
-        // Delete literals from resolved clause and the original clause.
-        cnf[a].clause.erase(remove(cnf[a].clause.begin(), cnf[a].clause.end(), literal), cnf[a].clause.end());
-        cnf[a].clause.erase(remove(cnf[a].clause.begin(), cnf[a].clause.end(), -literal), cnf[a].clause.end());
-        cnf[a].originalClause.erase(remove(cnf[a].originalClause.begin(), cnf[a].originalClause.end(), literal),
-                                    cnf[a].originalClause.end());
-        cnf[a].originalClause.erase(remove(cnf[a].originalClause.begin(), cnf[a].originalClause.end(), -literal),
-                                    cnf[a].originalClause.end());
+        resolutions.push(resClause);
+        // Resolve clauses.
+        for (int a : a_) {
+            // Check if equal.
+            if (a == b) {
+                addSolution(abs(literal));
+                continue;
+            }
+            unassignedVars.erase(abs(literal));
+            // Merge both clauses.
+            cnf[a].clause.insert(cnf[a].clause.end(), cnf[b].clause.begin(), cnf[b].clause.end());
+            //Re-reference literals.
+            for (int v : cnf[b].clause) {
+                if (!count(literalToClause[v].begin(), literalToClause[v].end(), a))
+                    literalToClause[v].push_back(a);
+            }
+            // Delete literals from resolved clause and the original clause.
+            cnf[a].clause.erase(remove(cnf[a].clause.begin(), cnf[a].clause.end(), literal), cnf[a].clause.end());
+            cnf[a].clause.erase(remove(cnf[a].clause.begin(), cnf[a].clause.end(), -literal), cnf[a].clause.end());
+            cnf[a].originalClause.erase(remove(cnf[a].originalClause.begin(), cnf[a].originalClause.end(), literal),
+                                        cnf[a].originalClause.end());
+            cnf[a].originalClause.erase(remove(cnf[a].originalClause.begin(), cnf[a].originalClause.end(), -literal),
+                                        cnf[a].originalClause.end());
+            // Clear literal(s).
+            literalToClause[literal].clear();
+            // Remove duplicates.
+            sort(cnf[a].clause.begin(), cnf[a].clause.end());
+            cnf[a].clause.erase(unique(cnf[a].clause.begin(), cnf[a].clause.end()), cnf[a].clause.end());
+            cnf[a].originalClause = cnf[a].clause;
+        }
+        // Check if the resolved rules are a tautology. We have to check this after resolving all clauses!
+        for (auto a :  a_) {
+            for (auto c : cnf[a].clause) {
+                if (count(cnf[a].clause.begin(), cnf[a].clause.end(), -c)) {
+                    addSolution(abs(c));
+                    break;
+                }
+            }
+        }
         // Clear literal(s).
         literalToClause[-literal].clear();
-        literalToClause[literal].clear();
-        // Remove duplicates.
-        sort(cnf[a].clause.begin(), cnf[a].clause.end());
-        cnf[a].clause.erase(unique(cnf[a].clause.begin(), cnf[a].clause.end()), cnf[a].clause.end());
     }
 
     // Adds the conflict clauses from the implication graph and updates information accordingly
@@ -418,7 +431,9 @@ void removePureLiterals(Data *data) {
 void performResolutionRule(Data *data) {
     unordered_set<int> vars(data->unassignedVars);
     for (auto literal : vars) {
-        if (data->getLiteralCount(literal) == 1 && data->getLiteralCount(-literal) == 1) {
+        if (data->getLiteralCount(literal) == 1 && data->getLiteralCount(-literal) > 0) {
+            data->resolve(-literal);
+        } else if (data->getLiteralCount(-literal) == 1 && data->getLiteralCount(literal) > 0) {
             data->resolve(literal);
         }
     }
