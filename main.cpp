@@ -806,9 +806,10 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         for (auto v : data.unassignedVars)
             solution.push_back(v);
         // Print solution.
-        cout << "SOLVED!\nSolution is: \n";
+        cout << "SOLVED:\n";
         sort(solution.begin(), solution.end(), [](int x, int y) { return abs(x) < abs(y); });
         printVector(solution);
+        cout << "\n";
         sat = true;
     } else {
         cout << "Formula is UNSAT!" << endl;
@@ -886,7 +887,7 @@ int main() {
     }
 
     unsigned int stepsTotal = 0;
-    for (const auto algorithm : Algorithm::NoPP) {
+    for (const auto algorithm : Algorithm::Default) {
         textFileTimes << "\n" << Algorithm::getVersionName(algorithm);
         textFileSteps << "\n" << Algorithm::getVersionName(algorithm);
         for (const auto &path : paths) {
