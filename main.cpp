@@ -27,10 +27,10 @@ unsigned int COUNTER = 0;
 /* Namespace to define variations of algorithms that bundles names as access points */
 namespace Algorithm {
     enum Version {
-        DEFAULT, HEU_LIT, NO_AUT, NO_PREP
+        DEFAULT, HEU_RAND, NO_AUT, NO_PREP
     };
     // All: Contains all variants
-    static const Version All[] = {DEFAULT, NO_AUT, HEU_LIT};
+    static const Version All[] = {DEFAULT, NO_AUT, HEU_RAND};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
     static const Version NoPP[] = {NO_PREP};
@@ -41,8 +41,8 @@ namespace Algorithm {
         switch (algorithm) {
             case DEFAULT:
                 return "Heuristic Variables";
-            case HEU_LIT:
-                return "Heuristic Literals";
+            case HEU_RAND:
+                return "Heuristic Random";
             case NO_AUT:
                 return "Not Autartic";
             case NO_PREP:
@@ -80,9 +80,6 @@ struct Clause {
     }
 };
 
-// We need this to generate a set of Clauses.
-bool operator<(const Clause &c1, const Clause &c2) { return c1.clause < c2.clause; }
-
 /* Removes clauses which are satisfied by a given assignment (alpha). */
 vector<Clause> removeSatisfiedClauses(const vector<Clause> &cnf, unordered_set<int> alpha) {
     vector<Clause> filteredCnf;
@@ -105,14 +102,52 @@ vector<Clause> removeSatisfiedClauses(const vector<Clause> &cnf, unordered_set<i
 struct Node {
     int literal;
     unsigned int level;
-    vector<int> edges;
+    set<Node *> edges;
 
-    explicit Node(int literal, unsigned int level, vector<int> edges = {}) {
+    explicit Node(int literal, unsigned int level, set<Node *> edges = {}) {
         this->literal = literal;
         this->level = level;
         this->edges = std::move(edges);
     }
+
+    /* Returns childes (i.e edges/cuts) that are do not contain the current level! */
+    set<Node *> getNonAssertingChildren(unsigned int maxLevelIndex) {
+        set<Node *> children;
+        if (level < maxLevelIndex)
+            return set({this});
+        for (auto edge : edges) {
+            auto subChildren = edge->getNonAssertingChildren(maxLevelIndex);
+            children.insert(subChildren.begin(), subChildren.end());
+        }
+        return children;
+    }
 };
+
+
+// We need this to generate sets and for ordering.
+bool operator<(const Clause &c1, const Clause &c2) { return c1.clause < c2.clause; }
+
+bool operator==(const Clause &c1, const Clause &c2) { return c1.clause == c2.clause; }
+
+bool operator<(const Node &n1, const Node &n2) {
+    if (n1.level == n2.level)
+        return abs(n1.literal) < abs(n2.literal);
+    return n1.level < n2.level;
+}
+
+template<class T>
+vector<T *> setToSortedVector(const set<T *> &container) {
+    vector<T *> container_(container.begin(), container.end());
+    sort(container_.begin(), container_.end());
+    return container_;
+}
+
+template<class T>
+vector<T> unorderedSetToSortedVector(const unordered_set<T> &container) {
+    vector<T> container_(container.begin(), container.end());
+    sort(container_.begin(), container_.end());
+    return container_;
+}
 
 /*
  * Implication graph.
@@ -121,69 +156,83 @@ struct Node {
  */
 struct ImplicationGraph {
     vector<Clause> originalCNF;
-    unsigned int levelIndex = 0;
+    unsigned int maxLevelIndex = 0;
     unordered_map<int, Node *> nodes;
-    set<vector<int>> conflictClauses;
+    set<Clause> conflictClauses;
 
-    explicit ImplicationGraph(vector<Clause> originalCNF) { this->originalCNF = originalCNF; }
+    explicit ImplicationGraph(vector<Clause> originalCNF) { this->originalCNF = std::move(originalCNF); }
 
     int getSize() const { return nodes.size(); }
 
     Node *addSolutionGuess(int literal) {
-        nodes[literal] = new Node(literal, ++levelIndex);
+        nodes[literal] = new Node(literal, ++maxLevelIndex);
+        // cout << "\nGuess: " << literal << " (" << nodes[literal]->level << ") ";
         return nodes[literal];
     }
 
-    Node *addImplication(int literal, const vector<int> &cnf) {
+    Node *addImplication(int literal, const set<Node *> &implications) {
         unsigned int maxLevel = 0;
-        vector<int> implications = {};
-        // Makes sure the literal itself is not contained in the implication.
         // Also, get the highest implication level.
-        for (auto v : cnf) {
-            if (v == literal)
-                continue;
-            implications.push_back(-v);
-            maxLevel = max(maxLevel, nodes[-v]->level);
-        }
+        for (auto imp : implications)
+            maxLevel = max(maxLevel, imp->level);
         nodes[literal] = new Node(literal, maxLevel, implications);
+        // cout << "-> " << literal << " (" << nodes[literal]->level << ") ";
+        // printVector(implications);
         return nodes[literal];
     }
 
     // When adding a new solution results in UNSAT, this function is called.
     // Return the "assertionLevel".
-    unsigned int handleConflictClause(Clause *clause) {
-        unsigned int asserting = 0;
-        unsigned int maxLevel = 0;
-        unsigned int assertionLevel = 0;
-        vector<int> cut;
+    Node *handleConflictClause(Clause *clause) {
+        bool asserting = false;
+        bool getAssertingChildren = false;
+        Node *assertionNode = nullptr;
+        set<Node *> cut;
         // Find basic cut
         // TODO: Find more cuts, e.g using heuristics
         for (auto literal : clause->originalClause) {
             Node *node = nodes[-literal];
-            vector<int> edges = node->edges;
+            set<Node *> edges = node->edges;
             if (edges.empty())
-                cut.push_back(-literal);
+                cut.insert(node);
             else
-                cut.insert(cut.end(), edges.begin(), edges.end());
+                copy(edges.begin(), edges.end(), inserter(cut, cut.end()));
         }
+        set<Node *> cutAsserting;
         for (auto edge : cut) {
             // Check if clause is asserting!
-            if (nodes[edge]->level == levelIndex)
-                asserting += 1;
-            unsigned int m = nodes[edge]->level;
-            if (m > maxLevel) {
-                assertionLevel = maxLevel;
-                maxLevel = m;
+            if (edge->level == maxLevelIndex) {
+                if (!asserting)
+                    asserting = true;
+                else
+                    getAssertingChildren = true;
+            }
+            cutAsserting.insert(edge);
+        }
+        //Check for asserting conflict clause, which should be guaranteed by the above function.
+        if (!asserting)
+            return nullptr;
+        // Get children if necessary.
+        if (getAssertingChildren) {
+            for (auto edge : cutAsserting) {
+                auto children = edge->getNonAssertingChildren(maxLevelIndex);
+                for (auto e : children)
+                    cutAsserting.insert(e);
             }
         }
-        //Check for asserting conflict clause.
-        if (asserting != 1)
-            return 0;
-        // Negate all literals
-        std::transform(cut.begin(), cut.end(), cut.begin(), [](auto &v) { return -1 * v; });
+        // Get the assertion level.
+        for (auto edge : cutAsserting) {
+            if ((nullptr == assertionNode || edge->level > assertionNode->level) && edge->level < maxLevelIndex)
+                assertionNode = edge;
+        }
+        vector<int> c;
+        // Add negated literals
+        for (auto node : cutAsserting)
+            c.push_back(-1 * node->literal);
         // Add conflict clause
-        conflictClauses.insert(cut);
-        return assertionLevel;
+        Clause conflictClause(c);
+        conflictClauses.insert(conflictClause);
+        return assertionNode;
     }
 };
 
@@ -204,16 +253,19 @@ struct Data {
     unordered_set<int> assignedVars;
     unordered_set<int> unassignedVars;
     stack<vector<int>> resolutions;
-    stack<Node *> solutionHistory;
+    set<Node *> solutionHistory;
     unordered_map<int, vector<int>> literalToClause;
+    bool falsified = false;
     bool unsat = false;
     Algorithm::Version algorithm;
-    unsigned int assertionLevel = 0;
+    Node *assertionNode = nullptr;
+    stack<Node *> assertionHistory;
 
-    void updateClauseInformation() {
-        clausesRemaining.clear();
-        literalToClause.clear();
-        unassignedVars.clear();
+    /* Constructor for the data structure. */
+    explicit Data(ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
+        this->implicationGraph = implicationGraph;
+        this->cnf = implicationGraph->originalCNF;
+        this->algorithm = algorithm;
         for (int i = 0; i < cnf.size(); ++i) {
             clausesRemaining.push_back(i);
             for (auto v : cnf[i].clause) {
@@ -223,41 +275,37 @@ struct Data {
         }
     }
 
-    /* Constructor for the data structure. */
-    explicit Data(ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
-        this->implicationGraph = implicationGraph;
-        this->cnf = implicationGraph->originalCNF;
-        this->algorithm = algorithm;
-        updateClauseInformation();
-    }
-
-    /* Restores the original clauses+ */
+    /* Restores the original clauses. */
     void nonChronologicalBacktracking() {
-        return;
-        for (Clause c : cnf)
-            c.clause = c.originalClause;
-
-        /*
+        // cout << "|";
+        if (assertionNode == nullptr) {
+            assertionNode = assertionHistory.top();
+            assertionHistory.pop();
+        }
         while (!resolutions.empty())
             resolutions.pop();
-
-        while (!solutionHistory.empty()) {
-            Node *node = solutionHistory.top();
-            if (node->level > assertionLevel) {
-                solutionHistory.pop();
+        set<Node *> solutionHistory_(solutionHistory);
+        for (auto node : solutionHistory_) {
+            // cout << node->literal << "[" << node->level << "]";
+            if (node->level >= assertionNode->level) {
                 assignedVars.erase(node->literal);
-            } else break;
+                unassignedVars.insert(abs(node->literal));
+                solutionHistory.erase(node);
+            }
         }
-         */
-
-        unsat = false;
-        updateClauseInformation();
-
-        for (int i = 0; i < cnf.size(); ++i) {
-            applySolution(&cnf[i]);
-            if (!unsat && cnf[i].clause.empty())
-                discardClause(i);
-        }
+        falsified = false;
+        clausesRemaining.clear();
+        literalToClause.clear();
+        set<Clause> cnf_new;
+        for (const Clause &c : cnf)
+            cnf_new.insert(Clause(c.originalClause));
+        cnf.clear();
+        auto conflictCNF = implicationGraph->conflictClauses;
+        implicationGraph->conflictClauses.clear();
+        cnf.clear();
+        cnf_new.insert(conflictCNF.begin(), conflictCNF.end());
+        for (const auto &c : cnf_new)
+            addClause(c);
     }
 
     /* Returns true if unsat or sat.
@@ -277,6 +325,8 @@ struct Data {
 
     /* Return the number of times a given literal occurs in unsatisfied clauses. */
     int getLiteralCount(int v) {
+        if (!literalToClause.count(v))
+            return 0;
         return this->literalToClause[v].size();
     }
 
@@ -294,17 +344,25 @@ struct Data {
     }
 
     void setUnsat(Clause *clause) {
-        unsat = true;
-        assertionLevel = max(assertionLevel, implicationGraph->handleConflictClause(clause));
+        falsified = true;
+        Node *node = implicationGraph->handleConflictClause(clause);
+        if (node != nullptr) {
+            assertionNode = node;
+            assertionHistory.push(assertionNode);
+        }
     }
 
     /* Add a new clause and update information accordingly. */
-    void addClause(const Clause &c) {
-        cnf.emplace_back(c);
-        applySolution(&cnf.back());
+    void addClause(const Clause &c_) {
+        cnf.emplace_back(c_);
+        Clause *c = &cnf.back();
+        applySolution(c);
         //Re-reference literals.
-        for (int v : c.clause) { literalToClause[v].push_back(cnf.size() - 1); }
-        if (unsat || !c.clause.empty())
+        for (int v : c->clause) {
+            literalToClause[v].push_back(cnf.size() - 1);
+            unassignedVars.insert(abs(v));
+        }
+        if (falsified || !c->clause.empty())
             clausesRemaining.push_back(cnf.size() - 1);
     }
 
@@ -315,19 +373,18 @@ struct Data {
         for (auto v : cnf[index].clause) {
             literalToClause[v].erase(remove(literalToClause[v].begin(),
                                             literalToClause[v].end(), index), literalToClause[v].end());
-
         }
     }
 
     /* Adds a literal to the solution list, i.e assigns a ground-truth to a variable. */
     void addSolution(int v, bool implied = false) {
-        if (assignedVars.count(v))
+        if (assignedVars.count(v) || falsified)
             return;
         // The counter keeps track on how many assignments we have done.
         COUNTER++;
         if (!implied) {
             Node *node = implicationGraph->addSolutionGuess(v);
-            solutionHistory.push(node);
+            solutionHistory.insert(node);
         }
         unassignedVars.erase(abs(v));
         assignedVars.insert(v);
@@ -343,19 +400,25 @@ struct Data {
         }
         //Remove negated literal from clauses.
         for (auto i : literalToClause[-v]) {
-            cnf[i].clause.erase(remove(cnf[i].clause.begin(), cnf[i].clause.end(), -v), cnf[i].clause.end());
-            if (cnf[i].clause.empty()) {
-                setUnsat(&cnf[i]); // UNSAT!!!!
-                return;
+            cnf[i].clause.erase(remove(cnf[i].clause.begin(), cnf[i].clause.end(), -v),
+                                cnf[i].clause.end());
+            int v2 = cnf[i].clause.front();
+            if (cnf[i].clause.size() == 1 && !assignedVars.count(v2)) {
+                set<Node *> implications;
+                for (auto lit : cnf[i].originalClause) {
+                    if (lit != v2)
+                        implications.insert(implicationGraph->nodes[-lit]);
+                }
+                Node *node = implicationGraph->addImplication(v2, implications);
+                solutionHistory.insert(node);
+                addSolution(v2, true);
             }
         }
         //First clear, then propagate implications.
         for (auto i : literalToClause[-v]) {
-            int v2 = cnf[i].clause.front();
-            if (cnf[i].clause.size() == 1 && !assignedVars.count(v2)) {
-                Node *node = implicationGraph->addImplication(v2, cnf[i].originalClause);
-                solutionHistory.push(node);
-                addSolution(v2, true);
+            if (cnf[i].clause.empty() && count(clausesRemaining.begin(), clausesRemaining.end(), i)) {
+                setUnsat(&cnf[i]); // UNSAT!!!!
+                return;
             }
         }
         literalToClause[-v].clear();
@@ -414,17 +477,6 @@ struct Data {
         for (const auto &c : newClauses)
             addClause(Clause(c));
     }
-
-    // Adds the conflict clauses from the implication graph and updates information accordingly
-    void applyConflictClauses() {
-        auto conflictCNF = implicationGraph->conflictClauses;
-        implicationGraph->conflictClauses.clear();
-        for (const auto &c : conflictCNF) {
-            addClause(Clause(c));
-        }
-        //nonChronologicalBacktracking();
-    }
-
 };
 
 /* Eliminates clauses that contain both, a variable and its negation, in the same clause. */
@@ -503,6 +555,8 @@ void removeUnitClauses(Data *data) {
         if (data->cnf[i].clause.size() == 1) {
             int literal = data->cnf[i].clause[0];
             data->addSolution(literal);
+            if (data->falsified)
+                return;
         }
 }
 
@@ -518,6 +572,8 @@ void removePureLiterals(Data *data) {
             data->addSolution(v);
         else if (a == 0)
             data->addSolution(-v);
+        if (data->falsified)
+            return;
     }
 }
 
@@ -666,62 +722,41 @@ vector<Clause> sortUnsatClausesVariables(Data *data, int order = -1) {
     return cnf;
 }
 
-/* Here, the number of variable (not literal) occurrence is of importance! */
-int heuristicVar(Data *data, int order = 1) {
-    vector<int> cnf(data->unassignedVars.begin(), data->unassignedVars.end());
-    sort(cnf.begin(), cnf.end(), [&data, &order](int x, int y) {
-        int a = data->getLiteralCount(x);
-        int b = data->getLiteralCount(y);
-        int a2 = data->getLiteralCount(-x);
-        int b2 = data->getLiteralCount(-y);
-        if (a + a2 != b + b2)
-            return (a + a2) * order > (b + b2) * order;
-        else
-            return (a * a2) * order > (b * b2) * order;
-    });
-    return cnf.front();
+/* The "variable move to front" (VMTF) heuristic! */
+int heuristicVMTF(Data *data) {
+    return 0;
 }
 
-/* Here, the number of literal (not variable) occurrence is of importance! */
-int heuristicLit(Data *data, int order = 1) {
-    vector<int> cnf(data->unassignedVars.begin(), data->unassignedVars.end());
-    sort(cnf.begin(), cnf.end(), [&data, &order](int x, int y) {
-        int a = data->getLiteralCount(x);
-        int b = data->getLiteralCount(y);
-        int a2 = data->getLiteralCount(-x);
-        int b2 = data->getLiteralCount(-y);
-        if (a != b)
-            return a * order > b * order;
-        else
-            return (a * a2) * order > (b * b2) * order;
-    });
-    return cnf.front();
+/* Randomly pick a variable! */
+int heuristicRandom(Data *data) {
+    vector<int> container;
+    std::sample(data->unassignedVars.begin(), data->unassignedVars.end(), back_inserter(container),
+                1, std::mt19937{std::random_device{}()});
+    return container.front();
 }
 
 /* Main logic of the sat solver; used for recursion. */
-Data solveSAT(Data data) {
-    if (data.canAbort())
-        return data;
+void solveSAT(Data *data) {
     /// PRE-FILTERING:
-    if (data.algorithm != Algorithm::Version::NO_PREP) {
-        ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
-        eliminateTautologies(&data);
+    if (data->algorithm != Algorithm::Version::NO_PREP) {
+        ////////////////////////// REMOVE TAUTOLOGIES ///////////////////////////////
+        eliminateTautologies(data);
         ////////////////////////// REMOVE UNIT CLAUSES  ///////////////////////////////
-        removeUnitClauses(&data);
+        removeUnitClauses(data);
+        if (data->falsified)
+            return;
         ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
-        removePureLiterals(&data);
-        ////////////////////////// PERFORM RESOLUTION RULE ////////////////////////////
-        performResolutionRule(&data);
-        ////////////////////////// REMOVE SUBSUMED THREE CLAUSES //////////////////////
-        removeSubsumedClauses(&data);
+        removePureLiterals(data);
+        if (data->falsified)
+            return;
+        ////////////////////////// PERFORM RESOLUTION ///////////////////////////////
+        performResolutionRule(data);
         //////////////////////////////////////////////////////////////////////////////
     }
-    if (data.canAbort())
-        return data;
     //////////////////////////  AUTARKIC CLAUSES TRICK  //////////////////////////
-    if (data.algorithm != Algorithm::Version::NO_AUT) {
+    if (data->algorithm != Algorithm::Version::NO_AUT) {
         vector<Clause> cnf;
-        cnf = sortUnsatClausesVariables(&data);
+        cnf = sortUnsatClausesVariables(data);
         Clause nextClause = getSmallestClause(cnf);
         for (int i = 0; i < nextClause.clause.size(); ++i) {
             unordered_set<int> assignmentNew = {};
@@ -729,38 +764,35 @@ Data solveSAT(Data data) {
             for (int j = 0; j < i; ++j)
                 assignmentNew.insert(-nextClause.clause[j]);
             if (isAutarkic(cnf, assignmentNew)) {
-                data.addSolutions(assignmentNew);
-                return solveSAT(data);
+                data->addSolutions(assignmentNew);
+                return;
             }
         }
     }
     ////////////////////////// CORE ALGORITHM  //////////////////////////
-    if (!data.unassignedVars.empty()) {
+    if (!data->unassignedVars.empty()) {
         // Heuristics
         int v;
-        if (data.algorithm == Algorithm::Version::HEU_LIT)
-            v = heuristicLit(&data);
-        else
-            v = heuristicVar(&data);
-        // NOTE: Since we are now using CDCL, we are not branching anymore.
-        // That is, we are using a non-chronological learning based on the assertion level of the clauses.
-        // That functionality is defined at !!!!"handleConflictClause"!!!!. The funcion below is basically only used
-        // for initialization and special case coverage (e.g when all cuts are non-asserting clauses).
-        for (const auto &y : {1, -1}) {
-            Data d = data;
-            d.addSolution(v * y);
-            if (d.unsat) {
-                data.applyConflictClauses();
-                continue;
-            }
-            d = solveSAT(d);
-            if (!d.unsat && d.clausesRemaining.empty())
-                return d;
+        if (data->assertionNode == nullptr) {
+            if (data->algorithm == Algorithm::Version::HEU_RAND)
+                v = heuristicVMTF(data); //heuristicRandom;
+            else
+                v = heuristicRandom(data); //heuristicVMTF;
+            //cout << "(heu=)";
+        } else v = -1 * data->assertionNode->literal;
+        // Add new guess.
+        data->assertionNode = nullptr;
+        /*
+        if (data.assertionHistory.count(v)) {
+            data.unsat = true;
+            return data;
         }
+         */
+        // cout << v << " ";
+        data->addSolution(v);
+        return;
     }
-    data.unsat = true;
-    data.assignedVars.clear();
-    return data; // UNSAT
+    data->unsat = data->falsified || !data->clausesRemaining.empty();
 }
 
 /* Starts the recursive sat-solver calls and sotres data accordingly in files. */
@@ -775,14 +807,31 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     //cout << "Clauses: " << cnf.size() << " | " << "Vars: " << origVars.size() << endl;
     //cnf = to3SAT(cnf); //Worsens performance!
     ImplicationGraph implicationGraph = ImplicationGraph(cnf);
-    Data data = Data(&implicationGraph, algorithm);
-    /////////
+    Data dataOriginal = Data(&implicationGraph, algorithm);
+    Data data(dataOriginal);
+    ///////// SAT SOLVER LOOP ////////
     COUNTER = 0;
-    data = solveSAT(data);
-    ///
+    eliminateTautologies(&data);
+    removePureLiterals(&data);
+    removeUnitClauses(&data);
+    removeSubsumedClauses(&data);
+    performResolutionRule(&data);
+
+    while (!data.canAbort()) {
+        solveSAT(&data);
+        if (data.falsified)
+            data.nonChronologicalBacktracking();
+        // Clause deleting strategy
+        if (COUNTER % 25000 == 0) {
+            auto assignedVars = data.assignedVars;
+            data = dataOriginal;
+            data.addSolutions(assignedVars);
+        }
+    }
+    ////////////////////////////////
     vector<int> solution;
 
-    if (!data.unsat) {
+    if (!data.falsified) {
         for (int v : data.assignedVars)
             if (origVars.find(v) != origVars.end() || origVars.find(-v) != origVars.end())
                 solution.push_back(v);
@@ -842,7 +891,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     cout << " [Graph size: " << data.implicationGraph->getSize() << "] " << endl;
     cout << "==========================================================" << endl;
     unordered_set<int> solutionCheck(solution.begin(), solution.end());
-    return data.unsat ||
+    return data.falsified ||
            (verifySolution(cnf, solutionCheck) && removeSatisfiedClauses(cnf, solutionCheck).empty());
 }
 
@@ -875,7 +924,7 @@ int main() {
     vector<string> paths2 = getTestFiles("../inputs/test/unsat");
     paths.insert(paths.end(), paths2.begin(), paths2.end());
     paths = getTestFiles("../inputs/test/more_complex_tests");
-    // paths = {"../inputs/test/more_complex_tests/uf50-08.cnf"};
+    // paths = {"../inputs/test/more_complex_tests/uf50-014.cnf"};
     // paths = {"../inputs/test/sat/unique.cnf"};
     // paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
     // paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
