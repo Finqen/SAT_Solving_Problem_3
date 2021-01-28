@@ -254,8 +254,8 @@ struct ImplicationGraph {
         }
         assertionLevel = 0;
         for (auto edge : cut) {
-            // backtrackNodes.insert(edge); this performed well!?
-            if(edge->level == maxLevelIndex)
+            backtrackNodes.insert(edge); // this performed well!?
+            if (edge->level == maxLevelIndex)
                 backtrackNodes.insert(edge);
             else if (edge->level < maxLevelIndex)
                 assertionLevel = max(assertionLevel, edge->level);
@@ -266,11 +266,10 @@ struct ImplicationGraph {
         // Add conflict clause. Sort to make it deterministic as sets are undeterministic.
         sort(cc.begin(), cc.end());
         conflictClause = cc;
-        // cout << ")";
         return backtrackNodes;
     }
 
-    /* Deletes and node and from all its implications. */
+    /* Deletes a node and from all its implications. */
     void deleteNode(Node *node) {
         nodes.erase(node->literal);
         for (auto imp : node->implications)
@@ -873,10 +872,13 @@ void solveSAT(Data *data) {
             //performResolutionRule(data);
         }
     }
-    if (data->falsified)
+    if (data->falsified) {
         data->nonChronologicalBacktracking();
-    // cout << data->implicationGraph->assertionLevel << "-> " << COUNTER << ">?" << data->assignedVars.size() << " ";
-    //data->unsat = data->unsat || (data->implicationGraph->assertionLevel == 0);
+    }
+    if (data->implicationGraph->assertionLevel == 0 && !data->backtrackNodes.empty()) {
+        //cout << "\nZERO: ";
+        //data->unsat = true;
+    }
 }
 
 /* Starts the recursive sat-solver calls and sotres data accordingly in files. */
@@ -1010,8 +1012,8 @@ int main() {
     paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = {"../inputs/test/sat/unit.cnf"};
-    // paths = {"../inputs/test/unsat/count7_2.cnf"};
-    // paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
+    // paths = {"../inputs/test/unsat/op7.cnf"};
+    paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
     // paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
     bool correct = true;
 
