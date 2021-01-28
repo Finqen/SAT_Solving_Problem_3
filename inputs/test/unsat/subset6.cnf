@@ -1,4 +1,4 @@
-c description: Subset cardinality formula for Random regular bipartite with (6,6) vertices and left degree 4 + 1 random reasons
+c description: Subset cardinality formula for Random regular bipartite with (6,6) vertices and left degree 4 + 1 random edges
 c generator: CNFgen (0.9.0)
 c copyright: (C) 2012-2020 Massimo Lauria <massimo.lauria@uniroma1.it>
 c url: https://massimolauria.net/cnfgen
