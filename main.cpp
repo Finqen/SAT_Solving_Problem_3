@@ -14,6 +14,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <stack>
+#include <queue>
 #include <dirent.h>
 
 using namespace std;
@@ -27,10 +28,10 @@ unsigned int COUNTER = 0;
 /* Namespace to define variations of algorithms that bundles names as access points */
 namespace Algorithm {
     enum Version {
-        DEFAULT, HEU_RAND, NO_AUT, NO_PREP
+        DEFAULT, HEU_VMTF, NO_AUT, NO_PREP
     };
     // All: Contains all variants
-    static const Version All[] = {DEFAULT, NO_AUT, HEU_RAND};
+    static const Version All[] = {DEFAULT, NO_AUT, HEU_VMTF};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
     static const Version NoPP[] = {NO_PREP};
@@ -41,8 +42,8 @@ namespace Algorithm {
         switch (algorithm) {
             case DEFAULT:
                 return "Heuristic Variables";
-            case HEU_RAND:
-                return "Heuristic Random";
+            case HEU_VMTF:
+                return "Heuristic VMTF";
             case NO_AUT:
                 return "Not Autartic";
             case NO_PREP:
@@ -51,12 +52,6 @@ namespace Algorithm {
                 return "Something went wrong?!";
         }
     }
-}
-
-template<typename T>
-void moveItemToBack(vector<T> &v, size_t index) {
-    auto it = v.begin() + index;
-    rotate(it, it + 1, v.end());
 }
 
 // Helper-function to print a vector to the console.
@@ -73,6 +68,12 @@ void printVectorOfVectors(const vector<vector<int>> &vector) { /* Prints a vecto
         printVector(vec);
     }
     cout << endl;
+}
+
+template<typename T>
+void moveToFront(vector<T> &v, size_t index) {
+    auto it = v.begin() + index;
+    rotate(v.begin(), it, it + 1);
 }
 
 /** Data structure used for the VMTF heuristic */
@@ -144,6 +145,19 @@ struct Node {
         }
         return children;
     }
+
+    /* Returns the children up to the root */
+    set<Node *> getSameLevelPath(Node *node) {
+        set<Node *> children;
+        if (level < node->level)
+            return {};
+        for (auto edge : reasons) {
+            auto subChildren = edge->getSameLevelPath(node);
+            children.insert(subChildren.begin(), subChildren.end());
+        }
+        children.insert(this);
+        return children;
+    }
 };
 
 
@@ -157,6 +171,25 @@ bool operator<(const EntryVMTF &e1, const EntryVMTF &e2) { return e1.counter < e
 bool operator>(const EntryVMTF &e1, const EntryVMTF &e2) { return e1.counter > e2.counter; }
 
 bool operator==(const EntryVMTF &e1, const EntryVMTF &e2) { return e1.literal == e2.literal; }
+
+bool compareEntryPointerAscending(const EntryVMTF *e1, const EntryVMTF *e2) {
+    if (e1->counter == e2->counter)
+        return e1->literal > e2->literal;
+    return e1->counter > e2->counter;
+}
+
+bool compareEntryPointerDescending(const EntryVMTF *e1, const EntryVMTF *e2) {
+    if (e1->counter == e2->counter)
+        return e1->literal < e2->literal;
+    return e1->counter < e2->counter;
+}
+
+struct EntryPointer {
+    bool operator()(const EntryVMTF *e1, const EntryVMTF *e2) const {
+        return compareEntryPointerDescending(e1, e2);
+    }
+};
+
 
 bool operator<(const Node &n1, const Node &n2) {
     if (n1.level == n2.level)
@@ -203,6 +236,7 @@ struct ImplicationGraph {
         if (!implied)
             ++maxLevelIndex;
         nodes[literal] = new Node(literal, maxLevelIndex);
+        assertionLevel = maxLevelIndex;
     }
 
     void addReasonToLiteral(int literal, const set<Node *> &reason) {
@@ -239,8 +273,6 @@ struct ImplicationGraph {
     // When adding a new solution results in UNSAT, this function is called.
     // Return the "assertionLevel".
     set<Node *> handleConflict(Clause *clause) {
-        // printImplicationGraph();
-        // printVector(clause->originalClause);
         set<Node *> backtrackNodes;
         set<Node *> cut;
         vector<int> cc;
@@ -250,15 +282,16 @@ struct ImplicationGraph {
             Node *node = nodes[-literal];
             auto children = node->getChildrenUpperLimit(maxLevelIndex);
             cut.insert(children.begin(), children.end());
-            backtrackNodes.insert(node);
+            // backtrackNodes.insert(node);
         }
         assertionLevel = 0;
         for (auto edge : cut) {
-            backtrackNodes.insert(edge); // this performed well!?
-            if (edge->level == maxLevelIndex)
-                backtrackNodes.insert(edge);
-            else if (edge->level < maxLevelIndex)
+            if (edge->level < maxLevelIndex)
                 assertionLevel = max(assertionLevel, edge->level);
+        }
+        for (auto n : getAllNodes()) {
+            if (n->level > assertionLevel)
+                backtrackNodes.insert(n);
         }
         // Add negated literals.
         for (auto node : cut)
@@ -266,6 +299,7 @@ struct ImplicationGraph {
         // Add conflict clause. Sort to make it deterministic as sets are undeterministic.
         sort(cc.begin(), cc.end());
         conflictClause = cc;
+        maxLevelIndex = assertionLevel;
         return backtrackNodes;
     }
 
@@ -276,6 +310,13 @@ struct ImplicationGraph {
             imp->reasons.erase(node);
         for (auto imp : node->reasons)
             imp->implications.erase(node);
+    }
+
+    void UpdateAssertionLevel() {
+        return;
+        assertionLevel = 0;
+        for (auto n : getAllNodes())
+            assertionLevel = max(assertionLevel, n->level);
     }
 };
 
@@ -299,12 +340,12 @@ struct Data {
     unordered_map<int, vector<int>> literalToClause;
     bool falsified = false;
     bool unsat = false;
+    bool hitLevelZero = false;
     Algorithm::Version algorithm;
     map<int, EntryVMTF *> mappingVMTF;
     vector<EntryVMTF *> vmtf;
-    vector<int> mtf;
+    vector<int> fixedOrder;
     set<Node *> backtrackNodes;
-    set<set<int>> conflictCheck;
 
     void updateClauseInformation() {
         unassignedVars.clear();
@@ -312,8 +353,12 @@ struct Data {
         clausesRemaining.clear();
         for (int i = 0; i < cnf.size(); ++i) {
             applySolution(&cnf[i]);
-            if (cnf[i].clause.empty())
-                continue;
+            if (cnf[i].clause.empty()) {
+                if (falsified) {
+                    clausesRemaining.push_back(i);
+                    return;
+                } else continue;
+            }
             clausesRemaining.push_back(i);
             for (auto v : cnf[i].clause) {
                 this->unassignedVars.insert(abs(v));
@@ -328,17 +373,18 @@ struct Data {
         this->cnf = implicationGraph->originalCNF;
         this->algorithm = algorithm;
         updateClauseInformation();
-        vector<EntryVMTF> vars;
+        vector<EntryVMTF *> vars;
         for (auto var : unassignedVars) {
-            vars.emplace_back(var, getLiteralCount(var));
-            vars.emplace_back(-var, getLiteralCount(-var));
+            int c = getLiteralCount(-var) * getLiteralCount(var);
+            vars.push_back(new EntryVMTF(var, c + getLiteralCount(var)));
+            vars.push_back(new EntryVMTF(-var, c + getLiteralCount(-var)));
         }
-        sort(vars.begin(), vars.end(), greater<>());
-        // We add to mtf now since vtmf is sorted by count.
+        sort(vars.begin(), vars.end(), compareEntryPointerAscending);
+        // We add to fixedOrder now since vmtf is sorted by count.
         for (auto v : vars) {
-            mappingVMTF[v.literal] = &v;
-            vmtf.push_back(mappingVMTF[v.literal]);
-            mtf.push_back(v.literal);
+            mappingVMTF[v->literal] = v;
+            vmtf.push_back(mappingVMTF[v->literal]);
+            fixedOrder.push_back(v->literal);
         }
     }
 
@@ -349,14 +395,13 @@ struct Data {
             resolutions.pop();
         for (auto node : backtrackNodes) {
             assignedVars.erase(node->literal);
-            unassignedVars.insert(abs(node->literal));
             implicationGraph->deleteNode(node);
         }
         falsified = false;
+        backtrackNodes.clear();
         // Generate new CNF.
         vector<Clause> clauses;
         clauses.emplace_back(implicationGraph->conflictClause);
-        implicationGraph->conflictClause.clear();
         for (const Clause &c : cnf)
             clauses.emplace_back(c.originalClause);
         cnf = clauses;
@@ -387,6 +432,7 @@ struct Data {
 
     /* Applies a solution to a clause (i.e removes potential negated literals). */
     void applySolution(Clause *c) {
+        if (falsified) return;
         for (auto v : assignedVars) {
             if (count(c->clause.begin(), c->clause.end(), v)) {
                 c->clause.clear();
@@ -394,49 +440,40 @@ struct Data {
             }
             c->clause.erase(remove(c->clause.begin(), c->clause.end(), -v), c->clause.end());
             if (c->clause.empty()) {
-                unsat = true; // Formula is UNSAT!!!!
+                //setFalsified(c);
+                cout << "F-APPLY ";
+                unsat = true;
                 return;
             }
         }
     }
 
     void setFalsified(Clause *clause) {
-        // printVector(clause->originalClause);
-        // printVector(setToSortedVector(conflictCheckNeg));
-        // cout << "\n";
         falsified = true;
         backtrackNodes = implicationGraph->handleConflict(clause);
-        /*
-        // Check if CNF is UNSAT.
-        set<int> check;
-        for (auto n : cut)
-            check.insert(n->literal);
-        //printVector(setToSortedVector(check));
-        if (conflictCheck.count(check)) {
-            // cout << "!!!!\n";
-            unsat = true; // UNSAT !!!!
-        } else
-            conflictCheck.insert(check);
-        //
-         */
-        /*
         // Update "variable move to front" (VMTF) heuristic.
         vector<EntryVMTF *> entries;
-        priority_queue<EntryVMTF *> priorityQueue;
-        for (auto v : clause->originalClause) {
+        priority_queue<EntryVMTF *, vector<EntryVMTF *>, EntryPointer> priorityQueue;
+        for (auto v : implicationGraph->conflictClause) {
             mappingVMTF[v]->counter += 1;
             priorityQueue.push(mappingVMTF[v]);
         }
-        int n = 0;
-        while (!priorityQueue.empty() && ++n <= 8) {
-            EntryVMTF *entry = priorityQueue.top();
-            priorityQueue.pop();
-            auto index = find(vmtf.begin(), vmtf.end(), entry) - vmtf.begin();
-            moveItemToBack(vmtf, index);
-            cout << (vmtf.back() == entry) << " ";
+        if (algorithm == Algorithm::Version::HEU_VMTF) {
+            int n = 0;
+            stack<int> toMove;
+            while (!priorityQueue.empty() && ++n <= 8) {
+                EntryVMTF *entry = priorityQueue.top();
+                priorityQueue.pop();
+                auto index = find(vmtf.begin(), vmtf.end(), entry) - vmtf.begin();
+                toMove.push(index);
+            }
+            while (!toMove.empty()) {
+                int index = toMove.top();
+                toMove.pop();
+                int a = vmtf[index]->literal;
+                moveToFront(vmtf, index);
+            }
         }
-        // cout << "!!!!!!!!!!!! ";
-         */
     }
 
     /* Add a new clause and update information accordingly. */
@@ -467,7 +504,8 @@ struct Data {
     }
 
     /* Adds a literal to the solution list, i.e assigns a ground-truth to a variable. */
-    void addSolution(int v, const set<Node *> &reason = {}) {
+    void addSolution(int v, const set<Node *> &reason = {}, int imp = 0) {
+        // cout << "(" << v << ")";
         if (assignedVars.count(v) || falsified)
             return;
         // The counter keeps track on how many assignments we have done.
@@ -478,6 +516,7 @@ struct Data {
         implicationGraph->addLiteralToGraph(v, implied);
         if (implied)
             implicationGraph->addReasonToLiteral(v, reason);
+        //else cout << ".";
         unassignedVars.erase(abs(v));
         assignedVars.insert(v);
         //Remove satisfied clauses.
@@ -490,27 +529,31 @@ struct Data {
                                                  literalToClause[v2].end(), i),
                                           literalToClause[v2].end());
         }
+        vector<pair<int, set<Node *>>> impliedSolutions;
         //Remove negated literal from clauses.
         for (auto i : literalToClause[-v]) {
             cnf[i].clause.erase(remove(cnf[i].clause.begin(), cnf[i].clause.end(), -v),
                                 cnf[i].clause.end());
             if (cnf[i].clause.empty() && count(clausesRemaining.begin(), clausesRemaining.end(), i)) {
                 setFalsified(&cnf[i]); // Falsified !!!!
+                // cout << "F-NEGATED " << -v;
                 return;
             }
-        }
-        // First clear, then propagate reasons.
-        for (auto i : literalToClause[-v]) {
-            int v2 = cnf[i].clause.front();
-            if (cnf[i].clause.size() == 1 && !assignedVars.count(v2)) {
+            if (cnf[i].clause.size() == 1) {
+                int v2 = cnf[i].clause.front();
                 set<Node *> reason_;
                 for (auto lit : cnf[i].originalClause) {
                     if (lit != v2)
                         reason_.insert(implicationGraph->nodes[-lit]);
                 }
-                addSolution(v2, reason_);
-                if (falsified) { return; }
+                impliedSolutions.emplace_back(v2, reason_);
             }
+        }
+        // First clear, then propagate reasons.
+        for (const auto &p : impliedSolutions) {
+            if (!assignedVars.count(p.first))
+                addSolution(p.first, p.second);
+            if (falsified) { return; }
         }
         literalToClause[-v].clear();
         literalToClause[v].clear();
@@ -649,7 +692,12 @@ void removeUnitClauses(Data *data) {
     for (auto i : cnf)
         if (data->cnf[i].clause.size() == 1) {
             int literal = data->cnf[i].clause[0];
-            data->addSolution(literal);
+            set<Node *> reason;
+            for (auto lit : data->cnf[i].originalClause) {
+                if (lit != literal)
+                    reason.insert(data->implicationGraph->nodes[-lit]);
+            }
+            data->addSolution(literal, reason);
             if (data->falsified)
                 return;
         }
@@ -712,8 +760,6 @@ bool verifySolution(const vector<Clause> &cnf, const unordered_set<int> &alpha) 
         bool correct = false;
         for (int v : c.originalClause) {
             if (alpha.count(v)) {
-                //cout << "\n"<< v;
-                //printVector(clause);
                 correct = true;
                 break;
             }
@@ -807,8 +853,7 @@ vector<Clause> sortUnsatClausesVariables(Data *data, int order = -1) {
 
 /* The "variable move to front" (VMTF) heuristic! */
 int heuristicVMTF(Data *data) {
-    for (auto it = data->vmtf.rbegin(); it != data->vmtf.rend(); ++it) {
-        EntryVMTF *entry = *it;
+    for (auto entry : data->vmtf) {
         if (data->unassignedVars.count(entry->literal))
             return entry->literal;
     }
@@ -816,13 +861,12 @@ int heuristicVMTF(Data *data) {
     return 0;
 }
 
-/* Randomly pick a variable! */
-int heuristicRandom(Data *data) {
+/* Pick a variable following a fixed order! */
+int heuristicFixedOrder(Data *data) {
     int v = 0;
-    for (int i = 0; i < data->mtf.size(); i++) {
-        if (data->unassignedVars.count(data->mtf[i])) {
-            v = data->mtf[i];
-            moveItemToBack(data->mtf, i);
+    for (int i = 0; i < data->fixedOrder.size(); i++) {
+        if (data->unassignedVars.count(data->fixedOrder[i])) {
+            v = data->fixedOrder[i];
             break;
         }
     }
@@ -831,53 +875,48 @@ int heuristicRandom(Data *data) {
 
 /* Main logic of the sat solver; used for recursion. */
 void solveSAT(Data *data) {
-    //////////////////////////  AUTARKIC CLAUSES TRICK  //////////////////////////
-    if (data->algorithm != Algorithm::Version::NO_AUT) {
-        vector<Clause> cnf;
-        cnf = sortUnsatClausesVariables(data);
-        Clause nextClause = getSmallestClause(cnf);
-        for (int i = 0; i < nextClause.clause.size(); ++i) {
-            unordered_set<int> assignmentNew = {};
-            assignmentNew.insert(nextClause.clause[i]);
-            for (int j = 0; j < i; ++j)
-                assignmentNew.insert(-nextClause.clause[j]);
-            if (isAutarkic(cnf, assignmentNew)) {
-                data->addSolutions(assignmentNew);
-                return;
+    removeUnitClauses(data);
+    if (!data->falsified && !data->unassignedVars.empty()) {
+        //////////////////////////  AUTARKIC CLAUSES TRICK  //////////////////////////
+        if (data->algorithm != Algorithm::Version::NO_AUT) {
+            vector<Clause> cnf;
+            cnf = sortUnsatClausesVariables(data);
+            Clause nextClause = getSmallestClause(cnf);
+            for (int i = 0; i < nextClause.clause.size(); ++i) {
+                unordered_set<int> assignmentNew = {};
+                assignmentNew.insert(nextClause.clause[i]);
+                for (int j = 0; j < i; ++j)
+                    assignmentNew.insert(-nextClause.clause[j]);
+                if (isAutarkic(cnf, assignmentNew)) {
+                    data->addSolutions(assignmentNew);
+                    return;
+                }
             }
         }
-    }
-    ////////////////////////// CORE ALGORITHM  //////////////////////////
-    if (!data->unassignedVars.empty()) {
+        ////////////////////////// CORE ALGORITHM  //////////////////////////
         // Heuristics
         int v;
-        if (data->algorithm == Algorithm::Version::HEU_RAND)
-            v = heuristicRandom(data);
+        if (data->algorithm == Algorithm::Version::HEU_VMTF)
+            v = heuristicVMTF(data);
         else
-            v = heuristicRandom(data); //heuristicVMTF(data);
-
-        //cout << "\n" << v << " ";
+            v = heuristicFixedOrder(data);
         data->addSolution(v);
         /// PRE-FILTERING:
         if (data->algorithm != Algorithm::Version::NO_PREP && !data->falsified) {
             ////////////////////////// REMOVE TAUTOLOGIES ///////////////////////////////
             eliminateTautologies(data);
-            ////////////////////////// REMOVE UNIT CLAUSES ///////////////////////////////
-            removeUnitClauses(data);
             ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
             removePureLiterals(data, {data->implicationGraph->nodes[v]});
             ////////////////////////// PERFORM SUBSUMATION ///////////////////////////////
             removeSubsumedClauses(data);
-            //////////////////////////////////////////////////////////////////////////////
-            //performResolutionRule(data);
         }
     }
     if (data->falsified) {
+        if (data->implicationGraph->assertionLevel == 0) {
+            data->unsat = data->hitLevelZero;
+            data->hitLevelZero = true;
+        }
         data->nonChronologicalBacktracking();
-    }
-    if (data->implicationGraph->assertionLevel == 0 && !data->backtrackNodes.empty()) {
-        //cout << "\nZERO: ";
-        //data->unsat = true;
     }
 }
 
@@ -890,7 +929,6 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     cout << "Algorithm: " << Algorithm::getVersionName(algorithm) << endl;
     vector<Clause> cnf = loadDimacsCnf(path);
     const unordered_set<int> &origVars = getVariables(cnf);
-    //cout << "Clauses: " << cnf.size() << " | " << "Vars: " << origVars.size() << endl;
     //cnf = to3SAT(cnf); //Worsens performance!
     ImplicationGraph implicationGraph = ImplicationGraph(cnf);
     Data dataOriginal = Data(&implicationGraph, algorithm);
@@ -903,10 +941,12 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     removePureLiterals(&data);
     removeSubsumedClauses(&data);
     performResolutionRule(&data);
+    if (data.falsified)
+        data.unsat = true;
     // Logic loop.
     while (!data.canAbort()) {
         // Clause deleting strategy
-        if (COUNTER % 25000 == 0) {
+        if (COUNTER % 25000 == 24999) {
             auto assignedVars = data.assignedVars;
             data = dataOriginal;
             data.addSolutions(assignedVars);
@@ -1009,14 +1049,13 @@ int main() {
     vector<string> paths = getTestFiles("../inputs/test/sat");
     vector<string> paths2 = getTestFiles("../inputs/test/unsat");
     paths.insert(paths.end(), paths2.begin(), paths2.end());
-    paths = getTestFiles("../inputs/test/more_complex_tests");
+    // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = {"../inputs/test/sat/unit.cnf"};
     // paths = {"../inputs/test/unsat/op7.cnf"};
     paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
     // paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
     bool correct = true;
-
     for (int i = 0; i < paths.size(); ++i) {
         textFileTimes << "," << i;
         textFileSteps << "," << i;
