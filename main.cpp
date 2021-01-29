@@ -23,6 +23,8 @@ ofstream textFileTimes;
 ofstream textFileSteps;
 ofstream solutionFile;
 unsigned int COUNTER = 0;
+unsigned int RESTART_COUNTER = 0;
+unsigned int RESTARTS = 0;
 // const auto MAX_THREADS = thread::hardware_concurrency();
 
 /* Namespace to define variations of algorithms that bundles names as access points */
@@ -367,11 +369,8 @@ struct Data {
         }
     }
 
-    /* Constructor for the data structure. */
-    explicit Data(ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
-        this->implicationGraph = implicationGraph;
-        this->cnf = implicationGraph->originalCNF;
-        this->algorithm = algorithm;
+    /* Resets the data object */
+    void reset() {
         updateClauseInformation();
         vector<EntryVMTF *> vars;
         for (auto var : unassignedVars) {
@@ -386,6 +385,14 @@ struct Data {
             vmtf.push_back(mappingVMTF[v->literal]);
             fixedOrder.push_back(v->literal);
         }
+    }
+
+/* Constructor for the data structure. */
+    explicit Data(ImplicationGraph *implicationGraph, Algorithm::Version algorithm) {
+        this->implicationGraph = implicationGraph;
+        this->cnf = implicationGraph->originalCNF;
+        this->algorithm = algorithm;
+        reset();
     }
 
     /* Restores the original clauses. */
@@ -505,7 +512,7 @@ struct Data {
 
     /* Adds a literal to the solution list, i.e assigns a ground-truth to a variable. */
     void addSolution(int v, const set<Node *> &reason = {}, int imp = 0) {
-        // cout << "(" << v << ")";
+        // cout << "(" << v << "-> " << implicationGraph->maxLevelIndex << ")";
         if (assignedVars.count(v) || falsified)
             return;
         // The counter keeps track on how many assignments we have done.
@@ -594,7 +601,6 @@ struct Data {
             // Check if equal.
             if (count(cnf[a].clause.begin(), cnf[a].clause.end(), -literal))
                 continue;
-            // Since we will be manipulating the original clause, field, add a copy of it to the cnf.
             vector<int> newClause(cnf[a].originalClause);
             unassignedVars.erase(abs(literal));
             // Merge both clauses.
@@ -614,6 +620,8 @@ struct Data {
             addClause(Clause(c));
     }
 };
+
+void preprocess(Data *pData);
 
 /* Eliminates clauses that contain both, a variable and its negation, in the same clause. */
 void eliminateTautologies(Data *data) {
@@ -912,6 +920,8 @@ void solveSAT(Data *data) {
         }
     }
     if (data->falsified) {
+        ++RESTART_COUNTER;
+        // cout << "[" << data->implicationGraph->assertionLevel << "]";
         if (data->implicationGraph->assertionLevel == 0) {
             data->unsat = data->hitLevelZero;
             data->hitLevelZero = true;
@@ -935,23 +945,23 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     Data data(dataOriginal);
     ///////// SAT SOLVER LOOP ////////
     COUNTER = 0;
-    // Preparing cnf. We must call this least once for our logic to work!
-    eliminateTautologies(&data);
-    removeUnitClauses(&data);
-    removePureLiterals(&data);
-    removeSubsumedClauses(&data);
-    performResolutionRule(&data);
+    RESTART_COUNTER = 0;
+    RESTARTS = 0;
+    // Logic loop.
+    preprocess(&data);
     if (data.falsified)
         data.unsat = true;
-    // Logic loop.
     while (!data.canAbort()) {
-        // Clause deleting strategy
-        if (COUNTER % 25000 == 24999) {
-            auto assignedVars = data.assignedVars;
-            data = dataOriginal;
-            data.addSolutions(assignedVars);
+        // Resetting & full preprocessing.
+        if (RESTART_COUNTER > ((1 + RESTARTS) * 100)) {
+            cout << ".";
+            RESTART_COUNTER = 0;
+            ++RESTARTS;
+            data.backtrackNodes = data.implicationGraph->getAllNodes();
+            data.nonChronologicalBacktracking();
+            preprocess(&data);
         }
-        // SAT solver logic.
+        // Logic.
         solveSAT(&data);
     }
     ////////////////////////////////
@@ -1021,6 +1031,15 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
            (verifySolution(cnf, solutionCheck) && removeSatisfiedClauses(cnf, solutionCheck).empty());
 }
 
+/* Applies a preprocessing to a data object */
+void preprocess(Data *data) {
+    eliminateTautologies(data);
+    removeUnitClauses(data);
+    removePureLiterals(data);
+    removeSubsumedClauses(data);
+    performResolutionRule(data);
+}
+
 /* Helper function to read in all files in a given directory. */
 vector<string> getTestFiles(const char *directory) {
     vector<string> paths;
@@ -1053,7 +1072,7 @@ int main() {
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = {"../inputs/test/sat/unit.cnf"};
     // paths = {"../inputs/test/unsat/op7.cnf"};
-    paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
+    // paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
     // paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
