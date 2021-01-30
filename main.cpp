@@ -399,7 +399,7 @@ struct Data {
         reset();
     }
 
-    /* Delete added conflict clauses with <50% assigned vars. */
+    /* Delete added conflict clauses with <50% assigned vars and more than 8 vars. */
     vector<Clause> clauseDeletion(vector<Clause> clauses) {
         vector<Clause> clausesFiltered;
         int offset = implicationGraph->originalCNF.size();
@@ -407,10 +407,9 @@ struct Data {
         for (int i = 0; i < clauses.size(); i++) {
             Clause c = clauses[i];
             applySolution(&c);
-            if (deleteClauses && i >= offset) {
-                if (c.originalClause.size() > 8 && float(c.clause.size()) / c.originalClause.size() > 0.5)
-                    continue;
-            }
+            if (deleteClauses && i >= offset && c.clause.size() > 8 &&
+                float(c.clause.size()) / c.originalClause.size() > 0.5)
+                continue;
             clausesFiltered.push_back(c);
         }
         return clausesFiltered;
