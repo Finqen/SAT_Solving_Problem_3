@@ -328,7 +328,7 @@ struct ImplicationGraph {
  * clausesRemaining: The indexes of the remaining clauses (that are not fulfilled yet).
  * unassignedVars: A set of variables that have no assignment yet.
  * resolutions: Store the resolutions. Since order matters (LIFO), we use a stack.
- * literalToClause: Mapping from literal to its occurrence in the respective clauses.
+ * watchedLiteralToClause: Mapping from literal to its occurrence in the respective clauses.
  * unsat: Is the formula UNSAT?
  * algorithm: Reference to the underlying algorithm variant.
  */
@@ -339,7 +339,7 @@ struct Data {
     unordered_set<int> assignedVars;
     unordered_set<int> unassignedVars;
     stack<vector<int>> resolutions;
-    unordered_map<int, vector<int>> literalToClause;
+    unordered_map<int, vector<int>> watchedLiteralToClause;
     bool falsified = false;
     bool unsat = false;
     bool hitLevelZero = false;
@@ -348,13 +348,17 @@ struct Data {
     vector<EntryVMTF *> vmtf;
     vector<int> fixedOrder;
     set<Node *> backtrackNodes;
+    set<int> watchedLiterals;
 
-    void updateClauseInformation() {
+    /* Updates information for the data object */
+    void updateClauseInformation(bool solve = true) {
         unassignedVars.clear();
-        literalToClause.clear();
+        watchedLiteralToClause.clear();
         clausesRemaining.clear();
+        watchedLiterals.clear();
         for (int i = 0; i < cnf.size(); ++i) {
-            applySolution(&cnf[i]);
+            if (solve)
+                applySolution(&cnf[i]);
             if (cnf[i].clause.empty()) {
                 if (falsified) {
                     clausesRemaining.push_back(i);
@@ -364,7 +368,7 @@ struct Data {
             clausesRemaining.push_back(i);
             for (auto v : cnf[i].clause) {
                 this->unassignedVars.insert(abs(v));
-                this->literalToClause[v].push_back(i);
+                this->watchedLiteralToClause[v].push_back(i);
             }
         }
     }
@@ -395,7 +399,24 @@ struct Data {
         reset();
     }
 
-    /* Restores the original clauses. */
+    /* Delete added conflict clauses with <50% assigned vars. */
+    vector<Clause> clauseDeletion(vector<Clause> clauses) {
+        vector<Clause> clausesFiltered;
+        int offset = implicationGraph->originalCNF.size();
+        bool deleteClauses = clauses.size() - offset > 2 * offset;
+        for (int i = 0; i < clauses.size(); i++) {
+            Clause c = clauses[i];
+            applySolution(&c);
+            if (deleteClauses && i >= offset) {
+                if (c.originalClause.size() > 8 && float(c.clause.size()) / c.originalClause.size() > 0.5)
+                    continue;
+            }
+            clausesFiltered.push_back(c);
+        }
+        return clausesFiltered;
+    }
+
+/* Restores the original clauses. */
     void nonChronologicalBacktracking() {
         if (unsat) return;
         while (!resolutions.empty())
@@ -408,11 +429,12 @@ struct Data {
         backtrackNodes.clear();
         // Generate new CNF.
         vector<Clause> clauses;
-        clauses.emplace_back(implicationGraph->conflictClause);
         for (const Clause &c : cnf)
             clauses.emplace_back(c.originalClause);
-        cnf = clauses;
-        updateClauseInformation();
+        // Add new clause to the back. Important for clause deletion strategy!
+        clauses.emplace_back(implicationGraph->conflictClause);
+        cnf = clauseDeletion(clauses);
+        updateClauseInformation(false);
     }
 
     /* Returns true if unsat or sat.
@@ -432,9 +454,9 @@ struct Data {
 
     /* Return the number of times a given literal occurs in unsatisfied clauses. */
     int getLiteralCount(int v) {
-        if (!literalToClause.count(v))
+        if (!watchedLiteralToClause.count(v))
             return 0;
-        return this->literalToClause[v].size();
+        return this->watchedLiteralToClause[v].size();
     }
 
     /* Applies a solution to a clause (i.e removes potential negated literals). */
@@ -491,7 +513,7 @@ struct Data {
         applySolution(c);
         //Re-reference literals.
         for (int v : c->clause) {
-            literalToClause[v].push_back(cnf.size() - 1);
+            watchedLiteralToClause[v].push_back(cnf.size() - 1);
             unassignedVars.insert(abs(v));
         }
         if (unsat || !c->clause.empty())
@@ -505,8 +527,9 @@ struct Data {
         clausesRemaining.erase(remove(clausesRemaining.begin(), clausesRemaining.end(), index),
                                clausesRemaining.end());
         for (auto v : cnf[index].clause) {
-            literalToClause[v].erase(remove(literalToClause[v].begin(),
-                                            literalToClause[v].end(), index), literalToClause[v].end());
+            watchedLiteralToClause[v].erase(remove(watchedLiteralToClause[v].begin(),
+                                                   watchedLiteralToClause[v].end(), index),
+                                            watchedLiteralToClause[v].end());
         }
     }
 
@@ -527,18 +550,18 @@ struct Data {
         unassignedVars.erase(abs(v));
         assignedVars.insert(v);
         //Remove satisfied clauses.
-        vector<int> clauses(literalToClause[v]);
+        vector<int> clauses(watchedLiteralToClause[v]);
         for (auto i : clauses) {
             clausesRemaining.erase(remove(clausesRemaining.begin(), clausesRemaining.end(), i),
                                    clausesRemaining.end());
             for (int v2 : cnf[i].clause)
-                literalToClause[v2].erase(remove(literalToClause[v2].begin(),
-                                                 literalToClause[v2].end(), i),
-                                          literalToClause[v2].end());
+                watchedLiteralToClause[v2].erase(remove(watchedLiteralToClause[v2].begin(),
+                                                        watchedLiteralToClause[v2].end(), i),
+                                                 watchedLiteralToClause[v2].end());
         }
         vector<pair<int, set<Node *>>> impliedSolutions;
         //Remove negated literal from clauses.
-        for (auto i : literalToClause[-v]) {
+        for (auto i : watchedLiteralToClause[-v]) {
             cnf[i].clause.erase(remove(cnf[i].clause.begin(), cnf[i].clause.end(), -v),
                                 cnf[i].clause.end());
             if (cnf[i].clause.empty() && count(clausesRemaining.begin(), clausesRemaining.end(), i)) {
@@ -562,8 +585,8 @@ struct Data {
                 addSolution(p.first, p.second);
             if (falsified) { return; }
         }
-        literalToClause[-v].clear();
-        literalToClause[v].clear();
+        watchedLiteralToClause[-v].clear();
+        watchedLiteralToClause[v].clear();
     }
 
     /* Adds multiple literals to the solution list, i.e assigns ground-truths to variables. */
@@ -580,11 +603,11 @@ struct Data {
     void resolve(int literal) {
         set<vector<int>> newClauses;
         vector<int> a_;
-        for (auto a : literalToClause[literal]) {
+        for (auto a : watchedLiteralToClause[literal]) {
             if (cnf[a].clause.size() > 1 && !count(cnf[a].clause.begin(), cnf[a].clause.end(), -literal))
                 a_.push_back(a);
         }
-        int b = literalToClause[-literal][0];
+        int b = watchedLiteralToClause[-literal][0];
         // Check if resulting resolutions are tautologies, then don't resolve.
         if (a_.empty() || count(cnf[b].clause.begin(), cnf[b].clause.end(), literal))
             return;
@@ -614,8 +637,8 @@ struct Data {
             newClauses.insert(newClause);
         }
         // Clear literal(s).
-        literalToClause[-literal].clear();
-        literalToClause[literal].clear();
+        watchedLiteralToClause[-literal].clear();
+        watchedLiteralToClause[literal].clear();
         for (const auto &c : newClauses)
             addClause(Clause(c));
     }
@@ -1068,7 +1091,7 @@ int main() {
     vector<string> paths = getTestFiles("../inputs/test/sat");
     vector<string> paths2 = getTestFiles("../inputs/test/unsat");
     paths.insert(paths.end(), paths2.begin(), paths2.end());
-    // paths = getTestFiles("../inputs/test/more_complex_tests");
+    paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = {"../inputs/test/sat/unit.cnf"};
     // paths = {"../inputs/test/unsat/op7.cnf"};
