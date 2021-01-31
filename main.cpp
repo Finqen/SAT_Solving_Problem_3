@@ -25,15 +25,14 @@ ofstream solutionFile;
 unsigned int COUNTER = 0;
 unsigned int RESTART_COUNTER = 0;
 unsigned int RESTARTS = 0;
-// const auto MAX_THREADS = thread::hardware_concurrency();
 
 /* Namespace to define variations of algorithms that bundles names as access points */
 namespace Algorithm {
     enum Version {
-        DEFAULT, HEU_VMTF, NO_AUT, NO_PREP
+        DEFAULT, HEU_VMTF, NO_AUT, NO_PREP, PS
     };
     // All: Contains all variants
-    static const Version All[] = {DEFAULT, NO_AUT, HEU_VMTF};
+    static const Version All[] = {DEFAULT, NO_AUT, HEU_VMTF, PS};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
     static const Version NoPP[] = {NO_PREP};
@@ -48,6 +47,8 @@ namespace Algorithm {
                 return "Heuristic VMTF";
             case NO_AUT:
                 return "Not Autartic";
+            case PS:
+                return "Phase Saving";
             case NO_PREP:
                 return "No preprocessing";
             default:
@@ -349,6 +350,7 @@ struct Data {
     vector<int> fixedOrder;
     set<Node *> backtrackNodes;
     set<int> watchedLiterals;
+    unordered_set<int> phaseSaving;
 
     /* Updates information for the data object */
     void updateClauseInformation(bool solve = true) {
@@ -399,7 +401,9 @@ struct Data {
         reset();
     }
 
-    /* Delete added conflict clauses with <50% assigned vars and more than 8 vars. */
+    /* Delete added conflict clauses with <50% assigned vars and more than 8 vars
+     * if the number of added conflict clauses is more than twice than number of starting
+     * clauses. */
     vector<Clause> clauseDeletion(vector<Clause> clauses) {
         vector<Clause> clausesFiltered;
         int offset = implicationGraph->originalCNF.size();
@@ -930,6 +934,10 @@ void solveSAT(Data *data) {
             v = heuristicVMTF(data);
         else
             v = heuristicFixedOrder(data);
+        // Check for phase saving.
+        if (data->algorithm == Algorithm::Version::PS && data->phaseSaving.count(-v))
+            v = -v;
+        // Add literal to solution.
         data->addSolution(v);
         /// PRE-FILTERING:
         if (data->algorithm != Algorithm::Version::NO_PREP && !data->falsified) {
@@ -979,6 +987,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
             cout << ".";
             RESTART_COUNTER = 0;
             ++RESTARTS;
+            data.phaseSaving = data.assignedVars;
             data.backtrackNodes = data.implicationGraph->getAllNodes();
             data.nonChronologicalBacktracking();
             preprocess(&data);
@@ -1090,7 +1099,7 @@ int main() {
     vector<string> paths = getTestFiles("../inputs/test/sat");
     vector<string> paths2 = getTestFiles("../inputs/test/unsat");
     paths.insert(paths.end(), paths2.begin(), paths2.end());
-    paths = getTestFiles("../inputs/test/more_complex_tests");
+    // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = {"../inputs/test/sat/unit.cnf"};
     // paths = {"../inputs/test/unsat/op7.cnf"};
