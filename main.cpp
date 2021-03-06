@@ -25,6 +25,7 @@ ofstream solutionFile;
 unsigned int COUNTER = 0;
 unsigned int RESTART_COUNTER = 0;
 unsigned int RESTARTS = 0;
+bool proof = false;
 
 /* Namespace to define variations of algorithms that bundles names as access points */
 namespace Algorithm {
@@ -302,9 +303,13 @@ struct ImplicationGraph {
         // Add conflict clause. Sort to make it deterministic as sets are undeterministic.
         sort(cc.begin(), cc.end());
         conflictClause = cc;
+        cout << "\n CONFLICT CLAUSE: \n";
+        printVector(cc);
+        cout << "\n ------------------ \n";
         maxLevelIndex = assertionLevel;
         return backtrackNodes;
     }
+
 
     /* Deletes a node and from all its implications. */
     void deleteNode(Node *node) {
@@ -665,7 +670,7 @@ void eliminateTautologies(Data *data) {
     }
 }
 
-/* Reads a diamacsCNF file from a given path. */
+/* Reads a dimacsCNF file from a given path. */
 vector<Clause> loadDimacsCnf(const string &path) {
     // cout << "Loading Dimacs-file at \"" << path << "\"." << endl;
     ifstream file(path);
@@ -978,7 +983,9 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     RESTART_COUNTER = 0;
     RESTARTS = 0;
     // Logic loop.
-    preprocess(&data);
+    if(!proof){
+        preprocess(&data);
+    }
     if (data.falsified)
         data.unsat = true;
     while (!data.canAbort()) {
@@ -1043,6 +1050,10 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
             }
             solutionFile << 0;
         } else {
+
+            if(proof) {
+                solutionFile << "o proof DRUP" << "\n";
+            }
             solutionFile << "s UNSATISFIABLE" << "\n";
         }
         solutionFile.close();
@@ -1091,14 +1102,43 @@ vector<string> getTestFiles(const char *directory) {
 }
 
 /* Main loop; loads in all /test files and starts the solving process. */
-int main() {
+int main(int argc, char** argv) {
+
     textFileTimes.open("times.csv");
     textFileSteps.open("steps.csv");
     textFileTimes << "Algorithm";
     textFileSteps << "Algorithm";
-    vector<string> paths = getTestFiles("../inputs/test/sat");
-    vector<string> paths2 = getTestFiles("../inputs/test/unsat");
-    paths.insert(paths.end(), paths2.begin(), paths2.end());
+    vector<string> paths;
+    vector<string> paths2;
+    vector<string> paths3;
+
+    for(int i = 0; i < argc; i++){
+        if(strcmp(argv[i],"proof")==0){
+            proof = true;
+        }
+    }
+
+    if(strcmp(argv[1],"-file")==0){
+        paths = {argv[2]};
+
+    }
+    else if(strcmp(argv[1],"-dir")==0){
+        paths = getTestFiles(argv[2]);
+        paths2 = getTestFiles(argv[3]);
+        paths3 = getTestFiles(argv[4]);
+        paths.insert(paths.end(), paths2.begin(), paths2.end());
+        paths.insert(paths.end(), paths3.begin(), paths3.end());
+    }
+    else {
+        cout << "Path needs to be provided as command line argument!";
+        cout << "\n\nPress any key to continue...";
+        getchar();
+        return 0;
+    }
+
+
+    // vector<string> paths = getTestFiles("../inputs/test/sat");
+    // vector<string> paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = {"../inputs/test/sat/unit.cnf"};
@@ -1127,9 +1167,23 @@ int main() {
     cout << "=> Total steps: " << stepsTotal << ".\n";
     // Here we can double check if our solution is actually true, if not, print it!
     // We can do that by feeding in the solution ot the entire CNF and see if it solves it.
-    if (!correct)
-        std::cout << "SOMETHING WENT WRONG!";
-    else
-        std::cout << "SOLUTION CORRECT & CHECKED!";
-    return !correct;
+    if (!correct) {
+        cout << "\nSOMETHING WENT WRONG!";
+        if(proof){
+            cout << "\n\n PROOF!";
+        }
+    }
+    else {
+        cout << "\nSOLUTION CORRECT & CHECKED!";
+        if(proof){
+            cout << "\n\n PROOF!";
+        }
+    }
+
+    cout << "\n\nPress any key to continue...";
+    getchar();
+
+
+
+
 }
