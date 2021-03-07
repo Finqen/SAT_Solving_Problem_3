@@ -1146,8 +1146,6 @@ int main(int argc, char** argv) {
         paths.insert(paths.end(), paths3.begin(), paths3.end());
     }
 
-
-
     // vector<string> paths = getTestFiles("../inputs/test/sat");
     // vector<string> paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
@@ -1163,7 +1161,7 @@ int main(int argc, char** argv) {
     }
 
     unsigned int stepsTotal = 0;
-    for (const auto algorithm : Algorithm::NoPP) {
+    for (const auto algorithm : Algorithm::Default) {
         textFileTimes << "\n" << Algorithm::getVersionName(algorithm);
         textFileSteps << "\n" << Algorithm::getVersionName(algorithm);
         for (const auto &path : paths) {
@@ -1189,13 +1187,13 @@ int main(int argc, char** argv) {
     if (!correct) {
         cout << "\nSOMETHING WENT WRONG!";
         if(proof){
-            cout << "\n\n PROOF!";
+            cout << "\n\nPROOF!";
         }
     }
     else {
         cout << "\nSOLUTION CORRECT & CHECKED!";
         if(proof){
-            cout << "\n\n PROOF!";
+            cout << "\n\nPROOF!";
         }
     }
 
