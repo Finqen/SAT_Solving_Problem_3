@@ -1126,8 +1126,8 @@ int main(int argc, char **argv) {
         paths.insert(paths.end(), paths3.begin(), paths3.end());
     }
 
-    // vector<string> paths = getTestFiles("../inputs/test/sat");
-    // vector<string> paths2 = getTestFiles("../inputs/test/unsat");
+    // paths = getTestFiles("../inputs/test/sat");
+    // paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = {"../inputs/test/sat/unit.cnf"};
