@@ -307,9 +307,6 @@ struct ImplicationGraph {
         conflictClause = cc;
 
         if(proof){
-            cout << "\n CONFLICT CLAUSE: \n";
-            printVector(cc);
-            cout << "\n ------------------ \n";
             for(auto n : cc){
                 proofFile << n << " ";
             }
@@ -994,9 +991,9 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     RESTART_COUNTER = 0;
     RESTARTS = 0;
     // Logic loop.
-    if(!proof){
-        preprocess(&data);
-    }
+
+    preprocess(&data);
+
     if (data.falsified)
         data.unsat = true;
     while (!data.canAbort()) {
@@ -1062,9 +1059,6 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
             solutionFile << 0;
         } else {
 
-            if(proof) {
-                solutionFile << "o proof DRUP" << "\n";
-            }
             solutionFile << "s UNSATISFIABLE" << "\n";
         }
         solutionFile.close();
