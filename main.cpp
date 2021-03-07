@@ -125,6 +125,7 @@ struct Node {
     unsigned int level;
     set<Node *> reasons;
     set<Node *> implications;
+    set<Node *> origins;
 
     explicit Node(int literal, unsigned int level) {
         this->literal = literal;
@@ -142,6 +143,8 @@ struct Node {
 
     /* Returns the children (i.e reasons/cuts) that are less than a specific level! */
     set<Node *> getChildrenUpperLimit(unsigned int maxLevelIndex) {
+        if (!origins.empty())
+            return origins;
         set<Node *> children;
         if (level < maxLevelIndex || reasons.empty())
             return set({this});
@@ -149,21 +152,10 @@ struct Node {
             auto subChildren = edge->getChildrenUpperLimit(maxLevelIndex);
             children.insert(subChildren.begin(), subChildren.end());
         }
+        origins = children;
         return children;
     }
 
-    /* Returns the children up to the root */
-    set<Node *> getSameLevelPath(Node *node) {
-        set<Node *> children;
-        if (level < node->level)
-            return {};
-        for (auto edge : reasons) {
-            auto subChildren = edge->getSameLevelPath(node);
-            children.insert(subChildren.begin(), subChildren.end());
-        }
-        children.insert(this);
-        return children;
-    }
 };
 
 
@@ -288,7 +280,6 @@ struct ImplicationGraph {
             Node *node = nodes[-literal];
             auto children = node->getChildrenUpperLimit(maxLevelIndex);
             cut.insert(children.begin(), children.end());
-            // backtrackNodes.insert(node);
         }
         assertionLevel = 0;
         for (auto edge : cut) {
@@ -306,8 +297,8 @@ struct ImplicationGraph {
         sort(cc.begin(), cc.end());
         conflictClause = cc;
 
-        if(proof){
-            for(auto n : cc){
+        if (proof) {
+            for (auto n : cc) {
                 proofFile << n << " ";
             }
 
@@ -322,17 +313,12 @@ struct ImplicationGraph {
     /* Deletes a node and from all its implications. */
     void deleteNode(Node *node) {
         nodes.erase(node->literal);
-        for (auto imp : node->implications)
+        for (auto imp : node->implications) {
             imp->reasons.erase(node);
+            imp->origins.clear();
+        }
         for (auto imp : node->reasons)
             imp->implications.erase(node);
-    }
-
-    void UpdateAssertionLevel() {
-        return;
-        assertionLevel = 0;
-        for (auto n : getAllNodes())
-            assertionLevel = max(assertionLevel, n->level);
     }
 };
 
@@ -1107,7 +1093,7 @@ vector<string> getTestFiles(const char *directory) {
 }
 
 /* Main loop; loads in all /test files and starts the solving process. */
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
 
     textFileTimes.open("times.csv");
     textFileSteps.open("steps.csv");
@@ -1117,6 +1103,7 @@ int main(int argc, char** argv) {
     vector<string> paths2;
     vector<string> paths3;
 
+    /*
     for(int i = 0; i < argc; i++){
         if(strcmp(argv[i],"proof")==0){
             proof = true;
@@ -1139,6 +1126,7 @@ int main(int argc, char** argv) {
         paths.insert(paths.end(), paths2.begin(), paths2.end());
         paths.insert(paths.end(), paths3.begin(), paths3.end());
     }
+    */
 
     // vector<string> paths = getTestFiles("../inputs/test/sat");
     // vector<string> paths2 = getTestFiles("../inputs/test/unsat");
@@ -1147,7 +1135,9 @@ int main(int argc, char** argv) {
     // paths = {"../inputs/test/sat/unit.cnf"};
     // paths = {"../inputs/test/unsat/op7.cnf"};
     // paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
-    // paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
+    paths = {"../inputs/sat/aim-200-1_6-yes1-3.cnf"};
+    //paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
+
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
         textFileTimes << "," << i;
@@ -1159,7 +1149,7 @@ int main(int argc, char** argv) {
         textFileTimes << "\n" << Algorithm::getVersionName(algorithm);
         textFileSteps << "\n" << Algorithm::getVersionName(algorithm);
         for (const auto &path : paths) {
-            if(proof) {
+            if (proof) {
                 int beginIdx = path.rfind('/');
                 string filename = path.substr(beginIdx + 1);
                 filename = regex_replace(filename, regex("cnf"), "drup");
@@ -1180,21 +1170,18 @@ int main(int argc, char** argv) {
     // We can do that by feeding in the solution ot the entire CNF and see if it solves it.
     if (!correct) {
         cout << "\nSOMETHING WENT WRONG!";
-        if(proof){
+        if (proof) {
             cout << "\n\nPROOF!";
         }
-    }
-    else {
+    } else {
         cout << "\nSOLUTION CORRECT & CHECKED!";
-        if(proof){
+        if (proof) {
             cout << "\n\nPROOF!";
         }
     }
 
     cout << "\n\nPress any key to exit...";
     getchar();
-
-
 
 
 }
