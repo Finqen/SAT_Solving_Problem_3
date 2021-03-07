@@ -16,12 +16,14 @@
 #include <stack>
 #include <queue>
 #include <dirent.h>
+#include <regex>
 
 using namespace std;
 
 ofstream textFileTimes;
 ofstream textFileSteps;
 ofstream solutionFile;
+ofstream proofFile;
 unsigned int COUNTER = 0;
 unsigned int RESTART_COUNTER = 0;
 unsigned int RESTARTS = 0;
@@ -303,9 +305,18 @@ struct ImplicationGraph {
         // Add conflict clause. Sort to make it deterministic as sets are undeterministic.
         sort(cc.begin(), cc.end());
         conflictClause = cc;
-        cout << "\n CONFLICT CLAUSE: \n";
-        printVector(cc);
-        cout << "\n ------------------ \n";
+
+        if(proof){
+            cout << "\n CONFLICT CLAUSE: \n";
+            printVector(cc);
+            cout << "\n ------------------ \n";
+            for(auto n : cc){
+                proofFile << n << " ";
+            }
+
+            proofFile << 0 << "\n";
+        }
+
         maxLevelIndex = assertionLevel;
         return backtrackNodes;
     }
@@ -1118,6 +1129,11 @@ int main(int argc, char** argv) {
         }
     }
 
+    if(argc < 2) {
+        cout << "Path needs to be provided as command line argument!";
+        cout << "\n\nPress any key to exit...";
+        return 0;
+    }
     if(strcmp(argv[1],"-file")==0){
         paths = {argv[2]};
 
@@ -1129,12 +1145,7 @@ int main(int argc, char** argv) {
         paths.insert(paths.end(), paths2.begin(), paths2.end());
         paths.insert(paths.end(), paths3.begin(), paths3.end());
     }
-    else {
-        cout << "Path needs to be provided as command line argument!";
-        cout << "\n\nPress any key to continue...";
-        getchar();
-        return 0;
-    }
+
 
 
     // vector<string> paths = getTestFiles("../inputs/test/sat");
@@ -1152,12 +1163,20 @@ int main(int argc, char** argv) {
     }
 
     unsigned int stepsTotal = 0;
-    for (const auto algorithm : Algorithm::Default) {
+    for (const auto algorithm : Algorithm::NoPP) {
         textFileTimes << "\n" << Algorithm::getVersionName(algorithm);
         textFileSteps << "\n" << Algorithm::getVersionName(algorithm);
         for (const auto &path : paths) {
+            if(proof) {
+                int beginIdx = path.rfind('/');
+                string filename = path.substr(beginIdx + 1);
+                filename = regex_replace(filename, regex("cnf"), "drup");
+                proofFile.open(filename);
+            }
             correct = correct && solveDimacs(path, algorithm);
             stepsTotal += COUNTER;
+            proofFile << 0;
+            proofFile.close();
         }
     }
 
@@ -1180,7 +1199,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    cout << "\n\nPress any key to continue...";
+    cout << "\n\nPress any key to exit...";
     getchar();
 
 
