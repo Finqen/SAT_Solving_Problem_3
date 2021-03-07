@@ -1103,7 +1103,6 @@ int main(int argc, char **argv) {
     vector<string> paths2;
     vector<string> paths3;
 
-    /*
     for(int i = 0; i < argc; i++){
         if(strcmp(argv[i],"proof")==0){
             proof = true;
@@ -1126,7 +1125,6 @@ int main(int argc, char **argv) {
         paths.insert(paths.end(), paths2.begin(), paths2.end());
         paths.insert(paths.end(), paths3.begin(), paths3.end());
     }
-    */
 
     // vector<string> paths = getTestFiles("../inputs/test/sat");
     // vector<string> paths2 = getTestFiles("../inputs/test/unsat");
@@ -1135,7 +1133,7 @@ int main(int argc, char **argv) {
     // paths = {"../inputs/test/sat/unit.cnf"};
     // paths = {"../inputs/test/unsat/op7.cnf"};
     // paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
-    paths = {"../inputs/sat/aim-200-1_6-yes1-3.cnf"};
+    //paths = {"../inputs/sat/aim-200-1_6-yes1-3.cnf"};
     //paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
 
     bool correct = true;
