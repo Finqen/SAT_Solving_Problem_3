@@ -943,7 +943,8 @@ void solveSAT(Data *data) {
             ////////////////////////// REMOVE TAUTOLOGIES ///////////////////////////////
             eliminateTautologies(data);
             ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
-            removePureLiterals(data, {data->implicationGraph->nodes[v]});
+            //removePureLiterals(data, {data->implicationGraph->nodes[v]});
+            removePureLiterals(data);
             ////////////////////////// PERFORM SUBSUMATION ///////////////////////////////
             removeSubsumedClauses(data);
         }
