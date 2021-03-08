@@ -12,6 +12,6 @@ Single Directory:
 
 > SAT_Solver.exe -dir "../inputs/test/sat" "../inputs/test/unsat"
 
-Up to three Directories:
+Up to two Directories:
 
-> SAT_Solver.exe -dir "../inputs/test/sat" "../inputs/test/unsat" "../inputs/test/maybesat"
+> SAT_Solver.exe -dir "../inputs/test/sat" "../inputs/test/unsat"
