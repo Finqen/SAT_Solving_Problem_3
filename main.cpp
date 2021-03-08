@@ -32,10 +32,10 @@ bool proof = false;
 /* Namespace to define variations of algorithms that bundles names as access points */
 namespace Algorithm {
     enum Version {
-        DEFAULT, HEU_VMTF, NO_AUT, NO_PREP, PS
+        DEFAULT, HEU_LIT, NO_AUT, NO_PREP, PS
     };
     // All: Contains all variants
-    static const Version All[] = {DEFAULT, NO_AUT, HEU_VMTF, PS};
+    static const Version All[] = {DEFAULT, NO_AUT, HEU_LIT, PS};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
     static const Version NoPP[] = {NO_PREP};
@@ -45,9 +45,9 @@ namespace Algorithm {
     string getVersionName(enum Version algorithm) {
         switch (algorithm) {
             case DEFAULT:
-                return "Heuristic Variables";
-            case HEU_VMTF:
                 return "Heuristic VMTF";
+            case HEU_LIT:
+                return "Heuristic Literals";
             case NO_AUT:
                 return "Not Autartic";
             case PS:
@@ -178,7 +178,7 @@ bool compareEntryPointerAscending(const EntryVMTF *e1, const EntryVMTF *e2) {
 
 bool compareEntryPointerDescending(const EntryVMTF *e1, const EntryVMTF *e2) {
     if (e1->counter == e2->counter)
-        return e1->literal < e2->literal;
+        return e1->literal > e2->literal;
     return e1->counter < e2->counter;
 }
 
@@ -486,22 +486,21 @@ struct Data {
         vector<EntryVMTF *> entries;
         priority_queue<EntryVMTF *, vector<EntryVMTF *>, EntryPointer> priorityQueue;
         for (auto v : implicationGraph->conflictClause) {
-            mappingVMTF[v]->counter += 1;
-            priorityQueue.push(mappingVMTF[v]);
+            mappingVMTF[-v]->counter += 1;
+            priorityQueue.push(mappingVMTF[-v]);
         }
-        if (algorithm == Algorithm::Version::HEU_VMTF) {
+        if (algorithm != Algorithm::Version::HEU_LIT) {
             int n = 0;
-            stack<int> toMove;
+            stack<EntryVMTF *> toMove;
             while (!priorityQueue.empty() && ++n <= 8) {
                 EntryVMTF *entry = priorityQueue.top();
                 priorityQueue.pop();
-                auto index = find(vmtf.begin(), vmtf.end(), entry) - vmtf.begin();
-                toMove.push(index);
+                toMove.push(entry);
             }
             while (!toMove.empty()) {
-                int index = toMove.top();
+                EntryVMTF *entry = toMove.top();
                 toMove.pop();
-                int a = vmtf[index]->literal;
+                int index = find(vmtf.begin(), vmtf.end(), entry) - vmtf.begin();
                 moveToFront(vmtf, index);
             }
         }
@@ -929,7 +928,7 @@ void solveSAT(Data *data) {
         ////////////////////////// CORE ALGORITHM  //////////////////////////
         // Heuristics
         int v;
-        if (data->algorithm == Algorithm::Version::HEU_VMTF)
+        if (data->algorithm != Algorithm::Version::HEU_LIT)
             v = heuristicVMTF(data);
         else
             v = heuristicFixedOrder(data);
@@ -1131,11 +1130,7 @@ int main(int argc, char **argv) {
     // paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
-    // paths = {"../inputs/test/sat/unit.cnf"};
-    // paths = {"../inputs/test/unsat/op7.cnf"};
-    // paths = {"../inputs/sat/aim-100-1_6-yes1-3.cnf"};
-    //paths = {"../inputs/sat/aim-200-1_6-yes1-3.cnf"};
-    //paths = {"../inputs/unsat/aim-100-2_0-no-3.cnf"};
+    // paths = getTestFiles("../inputs/sat");
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
