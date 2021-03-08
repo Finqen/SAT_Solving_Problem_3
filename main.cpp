@@ -135,7 +135,7 @@ struct Node {
     /* Recalculates the max level base don its reasons. */
     void updateReasoning() {
         level = 0;
-        for (auto edge : set(reasons)) {
+        for (auto edge : set<Node *>(reasons)) {
             level = max(level, edge->level);
             edge->implications.insert(this);
         }
@@ -147,7 +147,7 @@ struct Node {
             return origins;
         set<Node *> children;
         if (level < maxLevelIndex || reasons.empty())
-            return set({this});
+            return set<Node *>({this});
         for (auto edge : reasons) {
             auto subChildren = edge->getChildrenUpperLimit(maxLevelIndex);
             children.insert(subChildren.begin(), subChildren.end());
@@ -1118,12 +1118,15 @@ int main(int argc, char **argv) {
         paths = {argv[2]};
 
     }
-    else if(strcmp(argv[1],"-dir")==0){
+    if(strcmp(argv[1],"-dir")==0){
+
         paths = getTestFiles(argv[2]);
-        paths2 = getTestFiles(argv[3]);
-        paths3 = getTestFiles(argv[4]);
-        paths.insert(paths.end(), paths2.begin(), paths2.end());
-        paths.insert(paths.end(), paths3.begin(), paths3.end());
+
+        if(argc == 4){
+            paths2 = getTestFiles(argv[3]);
+            paths.insert(paths.end(), paths2.begin(), paths2.end());
+        }
+
     }
 
     // paths = getTestFiles("../inputs/test/sat");
