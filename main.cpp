@@ -172,13 +172,13 @@ bool operator==(const EntryVMTF &e1, const EntryVMTF &e2) { return e1.literal ==
 
 bool compareEntryPointerAscending(const EntryVMTF *e1, const EntryVMTF *e2) {
     if (e1->counter == e2->counter)
-        return e1->literal > e2->literal;
+        return e1->literal < e2->literal;
     return e1->counter > e2->counter;
 }
 
 bool compareEntryPointerDescending(const EntryVMTF *e1, const EntryVMTF *e2) {
     if (e1->counter == e2->counter)
-        return e1->literal > e2->literal;
+        return e1->literal < e2->literal;
     return e1->counter < e2->counter;
 }
 
@@ -387,6 +387,7 @@ struct Data {
         // We add to fixedOrder now since vmtf is sorted by count.
         for (auto v : vars) {
             mappingVMTF[v->literal] = v;
+            mappingVMTF[v->literal]->counter = 0;
             vmtf.push_back(mappingVMTF[v->literal]);
             fixedOrder.push_back(v->literal);
         }
@@ -933,8 +934,10 @@ void solveSAT(Data *data) {
         else
             v = heuristicFixedOrder(data);
         // Check for phase saving.
-        if (data->algorithm == Algorithm::Version::PS && data->phaseSaving.count(-v))
+        if (data->phaseSaving.count(-v)) {
+            data->phaseSaving.erase(-v);
             v = -v;
+        }
         // Add literal to solution.
         data->addSolution(v);
         /// PRE-FILTERING:
@@ -984,7 +987,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         data.unsat = true;
     while (!data.canAbort()) {
         // Resetting & full preprocessing.
-        if (RESTART_COUNTER > ((1 + RESTARTS) * 100)) {
+        if (RESTART_COUNTER > ((1 + RESTARTS) + 25)) {
             cout << ".";
             RESTART_COUNTER = 0;
             ++RESTARTS;
@@ -1103,26 +1106,26 @@ int main(int argc, char **argv) {
     vector<string> paths2;
     vector<string> paths3;
 
-    for(int i = 0; i < argc; i++){
-        if(strcmp(argv[i],"proof")==0){
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "proof") == 0) {
             proof = true;
         }
     }
 
-    if(argc < 2) {
+    if (argc < 2) {
         cout << "Path needs to be provided as command line argument!";
         cout << "\n\nPress any key to exit...";
         return 0;
     }
-    if(strcmp(argv[1],"-file")==0){
+    if (strcmp(argv[1], "-file") == 0) {
         paths = {argv[2]};
 
     }
-    if(strcmp(argv[1],"-dir")==0){
+    if (strcmp(argv[1], "-dir") == 0) {
 
         paths = getTestFiles(argv[2]);
 
-        if(argc == 4){
+        if (argc == 4) {
             paths2 = getTestFiles(argv[3]);
             paths.insert(paths.end(), paths2.begin(), paths2.end());
         }
@@ -1134,6 +1137,8 @@ int main(int argc, char **argv) {
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = getTestFiles("../inputs/sat");
+    // paths = {"../inputs/sat/aim-200-3_4-yes1-1.cnf"};
+    // paths = {"../inputs/sat/aim-200-2_0-yes1-1.cnf"};
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
