@@ -671,17 +671,20 @@ vector<Clause> loadDimacsCnf(const string &path) {
     string str;
     int nLiterals = 0;
     vector<Clause> cnf;
+    vector<int> numbers;
     while (getline(file, str)) {
-        if (str[0] != 'c' && str[0] != 'p') {
-            vector<int> numbers;
-            str = str.substr(0, str.size() - 1);
+        if (str[0] != 'c' && str[0] != 'p' && !str.empty()) {
             stringstream iss(str);
             int number;
-            while (iss >> number)
-                numbers.push_back(number);
-            Clause clause = Clause(numbers);
-            cnf.push_back(clause);
-            nLiterals += numbers.size();
+            while (iss >> number) {
+                if (number == 0) {
+                    Clause clause = Clause(numbers);
+                    cnf.push_back(clause);
+                    nLiterals += numbers.size();
+                    numbers.clear();
+                } else
+                    numbers.push_back(number);
+            }
         }
     }
     // cout << "Done! (Clauses: " << cnf.size() << " | Literals " << nLiterals << ")." << endl;
@@ -1138,7 +1141,7 @@ int main(int argc, char **argv) {
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-200-3_4-yes1-1.cnf"};
-    // paths = {"../inputs/sat/aim-200-2_0-yes1-1.cnf"};
+    // paths = {"../inputs/sat/ii8a1.cnf"};
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
