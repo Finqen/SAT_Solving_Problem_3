@@ -35,7 +35,7 @@ namespace Algorithm {
         DEFAULT, HEU_LIT, NO_AUT, NO_PREP, PS
     };
     // All: Contains all variants
-    static const Version All[] = {DEFAULT, NO_AUT, HEU_LIT, PS};
+    static const Version All[] = {DEFAULT, NO_AUT, HEU_LIT};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
     static const Version NoPP[] = {NO_PREP};
@@ -86,8 +86,9 @@ void moveToFront(vector<T> &v, size_t index) {
 struct EntryVMTF {
     int literal;
     int counter;
+    int counter2;
 
-    EntryVMTF(int literal, int counter) : literal(literal), counter(counter) {}
+    EntryVMTF(int literal, int counter, int counter2) : literal(literal), counter(counter), counter2(counter2) {}
 };
 
 /* Data structure for clauses that also stores the original clause */
@@ -171,14 +172,22 @@ bool operator>(const EntryVMTF &e1, const EntryVMTF &e2) { return e1.counter > e
 bool operator==(const EntryVMTF &e1, const EntryVMTF &e2) { return e1.literal == e2.literal; }
 
 bool compareEntryPointerAscending(const EntryVMTF *e1, const EntryVMTF *e2) {
-    if (e1->counter == e2->counter)
-        return e1->literal < e2->literal;
+    if (e1->counter == e2->counter) {
+        if (e1->counter2 == e2->counter2)
+            return e1->literal < e2->literal;
+        else
+            return e1->counter2 > e2->counter2;
+    }
     return e1->counter > e2->counter;
 }
 
 bool compareEntryPointerDescending(const EntryVMTF *e1, const EntryVMTF *e2) {
-    if (e1->counter == e2->counter)
-        return e1->literal < e2->literal;
+    if (e1->counter == e2->counter) {
+        if (e1->counter2 == e2->counter2)
+            return e1->literal < e2->literal;
+        else
+            return e1->counter2 < e2->counter2;
+    }
     return e1->counter < e2->counter;
 }
 
@@ -380,8 +389,8 @@ struct Data {
         vector<EntryVMTF *> vars;
         for (auto var : unassignedVars) {
             int c = getLiteralCount(-var) * getLiteralCount(var);
-            vars.push_back(new EntryVMTF(var, c + getLiteralCount(var)));
-            vars.push_back(new EntryVMTF(-var, c + getLiteralCount(-var)));
+            vars.push_back(new EntryVMTF(var, getLiteralCount(var), c));
+            vars.push_back(new EntryVMTF(-var, getLiteralCount(-var), c));
         }
         sort(vars.begin(), vars.end(), compareEntryPointerAscending);
         // We add to fixedOrder now since vmtf is sorted by count.
@@ -1108,7 +1117,7 @@ int main(int argc, char **argv) {
     vector<string> paths;
     vector<string> paths2;
     vector<string> paths3;
-
+    /*
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "proof") == 0) {
             proof = true;
@@ -1134,12 +1143,12 @@ int main(int argc, char **argv) {
         }
 
     }
-
+    */
     // paths = getTestFiles("../inputs/test/sat");
     // paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
-    // paths = getTestFiles("../inputs/sat");
+    paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-200-3_4-yes1-1.cnf"};
     // paths = {"../inputs/sat/ii8a1.cnf"};
 
@@ -1150,7 +1159,7 @@ int main(int argc, char **argv) {
     }
 
     unsigned int stepsTotal = 0;
-    for (const auto algorithm : Algorithm::Default) {
+    for (const auto algorithm : Algorithm::All) {
         textFileTimes << "\n" << Algorithm::getVersionName(algorithm);
         textFileSteps << "\n" << Algorithm::getVersionName(algorithm);
         for (const auto &path : paths) {
