@@ -981,6 +981,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     srand(unsigned(time(nullptr)));
     cout << "Path: " << path << endl;
     cout << "Algorithm: " << Algorithm::getVersionName(algorithm) << endl;
+    cout << "Generating data structure...";
     vector<Clause> cnf = loadDimacsCnf(path);
     const unordered_set<int> &origVars = getVariables(cnf);
     //cnf = to3SAT(cnf); //Worsens performance!
@@ -994,7 +995,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     // Logic loop.
 
     preprocess(&data);
-
+    cout << "\nSolving";
     if (data.falsified)
         data.unsat = true;
     while (!data.canAbort()) {
