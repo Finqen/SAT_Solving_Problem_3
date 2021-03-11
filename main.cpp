@@ -95,10 +95,12 @@ struct EntryVMTF {
 struct Clause {
     vector<int> clause;
     vector<int> originalClause;
+    bool conflictClause;
 
-    explicit Clause(const vector<int> &clause) {
+    explicit Clause(const vector<int> &clause, bool conflictClause = false) {
         this->clause = clause;
         this->originalClause = clause;
+        this->conflictClause = conflictClause;
     }
 };
 
@@ -348,6 +350,7 @@ struct Data {
     unordered_set<int> assignedVars;
     unordered_set<int> unassignedVars;
     stack<vector<int>> resolutions;
+    set<int> watchedLiterals;
     unordered_map<int, vector<int>> watchedLiteralToClause;
     bool falsified = false;
     bool unsat = false;
@@ -357,18 +360,16 @@ struct Data {
     vector<EntryVMTF *> vmtf;
     vector<int> fixedOrder;
     set<Node *> backtrackNodes;
-    set<int> watchedLiterals;
     unordered_set<int> phaseSaving;
 
     /* Updates information for the data object */
-    void updateClauseInformation(bool solve = true) {
+    void updateClauseInformation() {
         unassignedVars.clear();
         watchedLiteralToClause.clear();
         clausesRemaining.clear();
         watchedLiterals.clear();
         for (int i = 0; i < cnf.size(); ++i) {
-            if (solve)
-                applySolution(&cnf[i]);
+            applySolution(&cnf[i]);
             if (cnf[i].clause.empty()) {
                 if (falsified) {
                     clausesRemaining.push_back(i);
@@ -413,14 +414,12 @@ struct Data {
     /* Delete added conflict clauses with <50% assigned vars and more than 8 vars
      * if the number of added conflict clauses is more than twice than number of starting
      * clauses. */
-    vector<Clause> clauseDeletion(vector<Clause> clauses) {
+    vector<Clause> clauseDeletion(const vector<Clause> &clauses) const {
         vector<Clause> clausesFiltered;
-        int offset = implicationGraph->originalCNF.size();
-        bool deleteClauses = clauses.size() - offset > 2 * offset;
-        for (int i = 0; i < clauses.size(); i++) {
-            Clause c = clauses[i];
-            applySolution(&c);
-            if (deleteClauses && i >= offset && c.clause.size() > 8 &&
+        int orgSize = implicationGraph->originalCNF.size();
+        bool deleteClauses = cnf.size() - orgSize > 2 * orgSize;
+        for (const auto &c : clauses) {
+            if (deleteClauses && c.conflictClause && c.clause.size() > 8 &&
                 float(c.clause.size()) / c.originalClause.size() > 0.5)
                 continue;
             clausesFiltered.push_back(c);
@@ -428,11 +427,25 @@ struct Data {
         return clausesFiltered;
     }
 
-/* Restores the original clauses. */
+    /* Returns all non-original clauses (resolutions + conflict clauses) */
+    vector<Clause> getNonOriginalClauses() {
+        vector<Clause> clauses(cnf.begin() + implicationGraph->originalCNF.size(), cnf.end());
+        return clauses;
+    }
+
+    /* Returns all original clauses */
+    vector<Clause> getOriginalClauses() const {
+        vector<Clause> clauses(cnf.begin(), cnf.begin() + implicationGraph->originalCNF.size());
+        return clauses;
+    }
+
+    /* Restores the original clauses. */
     void nonChronologicalBacktracking() {
         if (unsat) return;
         while (!resolutions.empty())
             resolutions.pop();
+
+        vector<Clause> originalClauses;
         for (auto node : backtrackNodes) {
             assignedVars.erase(node->literal);
             implicationGraph->deleteNode(node);
@@ -440,13 +453,18 @@ struct Data {
         falsified = false;
         backtrackNodes.clear();
         // Generate new CNF.
-        vector<Clause> clauses;
-        for (const Clause &c : cnf)
-            clauses.emplace_back(c.originalClause);
+        vector<Clause> conflictClauses;
+        for (const Clause &c : getNonOriginalClauses())
+            conflictClauses.emplace_back(c.originalClause);
+        conflictClauses = clauseDeletion(conflictClauses);
+        for (const Clause &c : getOriginalClauses())
+            originalClauses.emplace_back(c.originalClause);
+
+        cnf = originalClauses;
+        cnf.insert(cnf.end(), conflictClauses.begin(), conflictClauses.end());
         // Add new clause to the back. Important for clause deletion strategy!
-        clauses.emplace_back(implicationGraph->conflictClause);
-        cnf = clauseDeletion(clauses);
-        updateClauseInformation(false);
+        cnf.emplace_back(implicationGraph->conflictClause, true);
+        updateClauseInformation();
     }
 
     /* Returns true if unsat or sat.
@@ -960,7 +978,7 @@ void solveSAT(Data *data) {
             //removePureLiterals(data, {data->implicationGraph->nodes[v]});
             removePureLiterals(data);
             ////////////////////////// PERFORM SUBSUMATION ///////////////////////////////
-            removeSubsumedClauses(data);
+            // removeSubsumedClauses(data);
         }
     }
     if (data->falsified) {
@@ -1039,7 +1057,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         for (auto v : data.unassignedVars)
             solution.push_back(v);
         // Print solution.
-        cout << "SOLVED:\n";
+        cout << "\nSOLVED:\n";
         sort(solution.begin(), solution.end(), [](int x, int y) { return abs(x) < abs(y); });
         printVector(solution);
         cout << "\n";
@@ -1118,7 +1136,7 @@ int main(int argc, char **argv) {
     vector<string> paths;
     vector<string> paths2;
     vector<string> paths3;
-    /*
+
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "proof") == 0) {
             proof = true;
@@ -1144,14 +1162,14 @@ int main(int argc, char **argv) {
         }
 
     }
-    */
+
     // paths = getTestFiles("../inputs/test/sat");
     // paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
-    paths = getTestFiles("../inputs/sat");
+    // paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-200-3_4-yes1-1.cnf"};
-    // paths = {"../inputs/sat/ii8a1.cnf"};
+    // paths = {"../inputs/malfunction/sat/ii16a1.cnf"};
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
@@ -1160,7 +1178,7 @@ int main(int argc, char **argv) {
     }
 
     unsigned int stepsTotal = 0;
-    for (const auto algorithm : Algorithm::All) {
+    for (const auto algorithm : Algorithm::Default) {
         textFileTimes << "\n" << Algorithm::getVersionName(algorithm);
         textFileSteps << "\n" << Algorithm::getVersionName(algorithm);
         for (const auto &path : paths) {
