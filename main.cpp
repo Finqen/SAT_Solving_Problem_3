@@ -720,30 +720,34 @@ vector<Clause> loadDimacsCnf(const string &path) {
 
 /* Transforms any CNF to 3-SAT.
  * We do not use this in our version, since the resolution rule sort of "undoes" the procedure. */
-vector<vector<int>> to3SAT(const vector<vector<int>> &cnf) {
+vector<Clause> to3SAT(const vector<Clause> &cnf) {
     cout << "Transforming CNF to 3-SAT..." << endl;
     vector<vector<int>> threeSat;
     int maxVar = 0;
-    for (const vector<int> &clause : cnf)
-        for (int literal : clause)
+    for (const auto &clause : cnf)
+        for (int literal : clause.clause)
             maxVar = max(abs(literal), maxVar);
-    for (vector<int> clause : cnf) {
-        if (clause.size() <= 3)
-            threeSat.push_back(clause);
+    for (auto c : cnf) {
+        if (c.clause.size() <= 3)
+            threeSat.push_back(c.clause);
         else {
-            vector<int> v{clause[0], clause[1], ++maxVar};
+            vector<int> v{c.clause[0], c.clause[1], ++maxVar};
             threeSat.push_back(v);
-            for (int i = 2; i < clause.size() - 2; i++) {
-                vector<int> v1{-maxVar, clause[i], ++maxVar};
+            for (int i = 2; i < c.clause.size() - 2; i++) {
+                vector<int> v1{-maxVar, c.clause[i], ++maxVar};
                 threeSat.push_back(v1);
             }
-            vector<int> v2{-maxVar, clause[clause.size() - 2], clause[clause.size() - 1]};
+            vector<int> v2{-maxVar, c.clause[c.clause.size() - 2],
+                           c.clause[c.clause.size() - 1]};
             threeSat.push_back(v2);
         }
     }
     cout << "Done! (Clauses old: " << cnf.size() << " | Clauses new: " << threeSat.size() << ")."
          << endl;
-    return threeSat;
+    vector<Clause> clauses;
+    for (auto c : threeSat)
+        clauses.push_back(Clause(c));
+    return clauses;
 }
 
 /* Removes clauses that contain only one literal and assigns those as solutions.
@@ -1002,7 +1006,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     cout << "Generating data structure...";
     vector<Clause> cnf = loadDimacsCnf(path);
     const unordered_set<int> &origVars = getVariables(cnf);
-    //cnf = to3SAT(cnf); //Worsens performance!
+    // cnf = to3SAT(cnf); //Worsens performance!
     ImplicationGraph implicationGraph = ImplicationGraph(cnf);
     Data dataOriginal = Data(&implicationGraph, algorithm);
     Data data(dataOriginal);
@@ -1011,7 +1015,6 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     RESTART_COUNTER = 0;
     RESTARTS = 0;
     // Logic loop.
-
     preprocess(&data);
     cout << "\nSolving";
     if (data.falsified)
@@ -1169,7 +1172,7 @@ int main(int argc, char **argv) {
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-200-3_4-yes1-1.cnf"};
-    // paths = {"../inputs/malfunction/sat/ii16a1.cnf"};
+    // paths = {"../inputs/malfunction/sat/ii32e2.cnf"};
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
