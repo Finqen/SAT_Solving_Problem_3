@@ -96,6 +96,7 @@ struct Clause {
     vector<int> clause;
     vector<int> originalClause;
     bool conflictClause;
+    bool discarded = false;
 
     explicit Clause(const vector<int> &clause, bool conflictClause = false) {
         this->clause = clause;
@@ -346,15 +347,15 @@ struct ImplicationGraph {
 struct Data {
     vector<Clause> cnf;
     ImplicationGraph *implicationGraph;
-    vector<int> clausesRemaining;
+    set<int> clausesRemaining;
     unordered_set<int> assignedVars;
     unordered_set<int> unassignedVars;
     stack<vector<int>> resolutions;
-    set<int> watchedLiterals;
     unordered_map<int, vector<int>> watchedLiteralToClause;
+    unordered_map<int, set<int>> watchedLiteralToClauseFull;
     bool falsified = false;
     bool unsat = false;
-    bool hitLevelZero = false;
+    int hitLevelZero = 0;
     Algorithm::Version algorithm;
     map<int, EntryVMTF *> mappingVMTF;
     vector<EntryVMTF *> vmtf;
@@ -363,20 +364,26 @@ struct Data {
     unordered_set<int> phaseSaving;
 
     /* Updates information for the data object */
-    void updateClauseInformation() {
+    void updateClauseInformation(bool reset = false) {
         unassignedVars.clear();
         watchedLiteralToClause.clear();
+        watchedLiteralToClauseFull.clear();
         clausesRemaining.clear();
-        watchedLiterals.clear();
         for (int i = 0; i < cnf.size(); ++i) {
+            //if (cnf[i].discarded)
+            //    continue;
+            if (reset)
+                cnf[i].clause = cnf[i].originalClause;
+            for (auto v : cnf[i].originalClause)
+                watchedLiteralToClauseFull[abs(v)].insert(i);
             applySolution(&cnf[i]);
             if (cnf[i].clause.empty()) {
                 if (falsified) {
-                    clausesRemaining.push_back(i);
+                    clausesRemaining.insert(i);
                     return;
                 } else continue;
             }
-            clausesRemaining.push_back(i);
+            clausesRemaining.insert(i);
             for (auto v : cnf[i].clause) {
                 this->unassignedVars.insert(abs(v));
                 this->watchedLiteralToClause[v].push_back(i);
@@ -414,17 +421,15 @@ struct Data {
     /* Delete added conflict clauses with <50% assigned vars and more than 8 vars
      * if the number of added conflict clauses is more than twice than number of starting
      * clauses. */
-    vector<Clause> clauseDeletion(const vector<Clause> &clauses) const {
-        vector<Clause> clausesFiltered;
+    void clauseDeletion() {
         int orgSize = implicationGraph->originalCNF.size();
         bool deleteClauses = cnf.size() - orgSize > 2 * orgSize;
-        for (const auto &c : clauses) {
-            if (deleteClauses && c.conflictClause && c.clause.size() > 8 &&
-                float(c.clause.size()) / c.originalClause.size() > 0.5)
-                continue;
-            clausesFiltered.push_back(c);
+        for (int i = orgSize; i < cnf.size(); ++i) {
+            if (deleteClauses && cnf[i].conflictClause && cnf[i].clause.size() > 8 &&
+                float(cnf[i].clause.size()) / cnf[i].originalClause.size() > 0.5) {
+                discardClause(i, false);
+            }
         }
-        return clausesFiltered;
     }
 
     /* Returns all non-original clauses (resolutions + conflict clauses) */
@@ -442,29 +447,22 @@ struct Data {
     /* Restores the original clauses. */
     void nonChronologicalBacktracking() {
         if (unsat) return;
-        while (!resolutions.empty())
-            resolutions.pop();
-
-        vector<Clause> originalClauses;
+        //while (!resolutions.empty())
+        //    resolutions.pop();
+        set<int> clausesToBacktrack;
         for (auto node : backtrackNodes) {
-            assignedVars.erase(node->literal);
+            // cout << node->literal << " ";
             implicationGraph->deleteNode(node);
+            assignedVars.erase(node->literal);
+            clausesToBacktrack.insert(watchedLiteralToClauseFull[abs(node->literal)].begin(),
+                                      watchedLiteralToClauseFull[abs(node->literal)].end());
         }
         falsified = false;
         backtrackNodes.clear();
-        // Generate new CNF.
-        vector<Clause> conflictClauses;
-        for (const Clause &c : getNonOriginalClauses())
-            conflictClauses.emplace_back(c.originalClause);
-        conflictClauses = clauseDeletion(conflictClauses);
-        for (const Clause &c : getOriginalClauses())
-            originalClauses.emplace_back(c.originalClause);
-
-        cnf = originalClauses;
-        cnf.insert(cnf.end(), conflictClauses.begin(), conflictClauses.end());
-        // Add new clause to the back. Important for clause deletion strategy!
-        cnf.emplace_back(implicationGraph->conflictClause, true);
-        updateClauseInformation();
+        updateClauses(clausesToBacktrack);
+        clauseDeletion();
+        addClause(Clause(implicationGraph->conflictClause, true));
+        //updateClauseInformation(true);
     }
 
     /* Returns true if unsat or sat.
@@ -491,7 +489,7 @@ struct Data {
 
     /* Applies a solution to a clause (i.e removes potential negated literals). */
     void applySolution(Clause *c) {
-        if (falsified) return;
+        if (falsified || c->originalClause.empty()) return;
         for (auto v : assignedVars) {
             if (count(c->clause.begin(), c->clause.end(), v)) {
                 c->clause.clear();
@@ -514,8 +512,8 @@ struct Data {
         vector<EntryVMTF *> entries;
         priority_queue<EntryVMTF *, vector<EntryVMTF *>, EntryPointer> priorityQueue;
         for (auto v : implicationGraph->conflictClause) {
-            mappingVMTF[-v]->counter += 1;
-            priorityQueue.push(mappingVMTF[-v]);
+            mappingVMTF[v]->counter += 1;
+            priorityQueue.push(mappingVMTF[v]);
         }
         if (algorithm != Algorithm::Version::HEU_LIT) {
             int n = 0;
@@ -534,11 +532,30 @@ struct Data {
         }
     }
 
+    /* Updates a subset of clause information. */
+    void updateClauses(const set<int> &clauses) {
+        for (int i : clauses) {
+            cnf[i].clause = cnf[i].originalClause;
+            applySolution(&cnf[i]);
+            if (cnf[i].clause.empty())
+                continue;
+            clausesRemaining.insert(i);
+            for (auto v : cnf[i].clause) {
+                this->unassignedVars.insert(abs(v));
+                if (find(watchedLiteralToClause[v].begin(), watchedLiteralToClause[v].end(), i)
+                    == watchedLiteralToClause[v].end())
+                    this->watchedLiteralToClause[v].push_back(i);
+            }
+        }
+    }
+
     /* Add a new clause and update information accordingly. */
     void addClause(const Clause &c_) {
         cnf.emplace_back(c_);
         if (unsat) { return; }
         Clause *c = &cnf.back();
+        for (int v : c->originalClause)
+            watchedLiteralToClauseFull[abs(v)].insert(cnf.size() - 1);
         applySolution(c);
         //Re-reference literals.
         for (int v : c->clause) {
@@ -546,15 +563,21 @@ struct Data {
             unassignedVars.insert(abs(v));
         }
         if (unsat || !c->clause.empty())
-            clausesRemaining.push_back(cnf.size() - 1);
+            clausesRemaining.insert(cnf.size() - 1);
         else if (!unsat && c->clause.size() == 1)
             addSolution(c->clause.front());
     }
 
     /* Removes a clause from the unsatisfied list, but updates all parameters accordingly. */
-    void discardClause(int index) {
-        clausesRemaining.erase(remove(clausesRemaining.begin(), clausesRemaining.end(), index),
-                               clausesRemaining.end());
+    void discardClause(int index, bool keep = true) {
+        clausesRemaining.erase(index);
+        if (!keep) {
+            cnf[index].clause.clear();
+            for (int v : cnf[index].originalClause)
+                watchedLiteralToClauseFull[abs(v)].erase(index);
+            cnf[index].originalClause.clear();
+        }
+        cnf[index].discarded = true;
         for (auto v : cnf[index].clause) {
             watchedLiteralToClause[v].erase(remove(watchedLiteralToClause[v].begin(),
                                                    watchedLiteralToClause[v].end(), index),
@@ -581,8 +604,7 @@ struct Data {
         //Remove satisfied clauses.
         vector<int> clauses(watchedLiteralToClause[v]);
         for (auto i : clauses) {
-            clausesRemaining.erase(remove(clausesRemaining.begin(), clausesRemaining.end(), i),
-                                   clausesRemaining.end());
+            clausesRemaining.erase(i);
             for (int v2 : cnf[i].clause)
                 watchedLiteralToClause[v2].erase(remove(watchedLiteralToClause[v2].begin(),
                                                         watchedLiteralToClause[v2].end(), i),
@@ -675,10 +697,12 @@ struct Data {
 
 void preprocess(Data *pData);
 
+void preprocess2(Data *pData);
+
 /* Eliminates clauses that contain both, a variable and its negation, in the same clause. */
 void eliminateTautologies(Data *data) {
     if (data->falsified) { return; }
-    vector<int> cnf(data->clausesRemaining);
+    set<int> cnf(data->clausesRemaining);
     for (auto i : cnf) {
         for (auto c : data->cnf[i].clause) {
             if (find(data->cnf[i].clause.begin(), data->cnf[i].clause.end(), -c) != data->cnf[i].clause.end()) {
@@ -755,7 +779,7 @@ vector<Clause> to3SAT(const vector<Clause> &cnf) {
 void removeUnitClauses(Data *data) {
     if (data->falsified) { return; }
     // cout << "Determining and removing unit clauses and literals." << endl;
-    vector<int> cnf(data->clausesRemaining);
+    set<int> cnf(data->clausesRemaining);
     for (auto i : cnf)
         if (data->cnf[i].clause.size() == 1) {
             int literal = data->cnf[i].clause[0];
@@ -866,7 +890,7 @@ unordered_set<int> getVariables(const vector<Clause> &cnf, bool absolute = false
 /* Performs the subsumation rule. */
 void removeSubsumedClauses(Data *data) {
     if (data->falsified) { return; }
-    vector<int> cnfUnsat(data->clausesRemaining);
+    set<int> cnfUnsat(data->clausesRemaining);
     vector<Clause> cnf(data->cnf);
     for (int i : cnfUnsat)
         sort(cnf[i].clause.begin(), cnf[i].clause.end());
@@ -876,7 +900,7 @@ void removeSubsumedClauses(Data *data) {
                 continue;
             if (includes(cnf[largeClause].clause.begin(), cnf[largeClause].clause.end(),
                          cnf[clause].clause.begin(), cnf[clause].clause.end())) {
-                data->discardClause(largeClause);
+                data->discardClause(largeClause, false);
             }
         }
     }
@@ -942,6 +966,7 @@ int heuristicFixedOrder(Data *data) {
 
 /* Main logic of the sat solver; used for recursion. */
 void solveSAT(Data *data) {
+    int v;
     removeUnitClauses(data);
     if (!data->falsified && !data->unassignedVars.empty()) {
         //////////////////////////  AUTARKIC CLAUSES TRICK  //////////////////////////
@@ -962,7 +987,6 @@ void solveSAT(Data *data) {
         }
         ////////////////////////// CORE ALGORITHM  //////////////////////////
         // Heuristics
-        int v;
         if (data->algorithm != Algorithm::Version::HEU_LIT)
             v = heuristicVMTF(data);
         else
@@ -976,21 +1000,16 @@ void solveSAT(Data *data) {
         data->addSolution(v);
         /// PRE-FILTERING:
         if (data->algorithm != Algorithm::Version::NO_PREP && !data->falsified) {
-            ////////////////////////// REMOVE TAUTOLOGIES ///////////////////////////////
             eliminateTautologies(data);
-            ////////////////////////// REMOVE PURE LITERALS ///////////////////////////////
-            //removePureLiterals(data, {data->implicationGraph->nodes[v]});
             removePureLiterals(data);
-            ////////////////////////// PERFORM SUBSUMATION ///////////////////////////////
-            // removeSubsumedClauses(data);
         }
     }
     if (data->falsified) {
         ++RESTART_COUNTER;
         // cout << "[" << data->implicationGraph->assertionLevel << "]";
         if (data->implicationGraph->assertionLevel == 0) {
-            data->unsat = data->hitLevelZero;
-            data->hitLevelZero = true;
+            data->unsat = abs(data->hitLevelZero) == abs(v);
+            data->hitLevelZero = abs(v);
         }
         data->nonChronologicalBacktracking();
     }
@@ -1021,14 +1040,15 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         data.unsat = true;
     while (!data.canAbort()) {
         // Resetting & full preprocessing.
-        if (RESTART_COUNTER > ((1 + RESTARTS) + 25)) {
+        if (RESTART_COUNTER > ((10 + RESTARTS) * implicationGraph.originalCNF.size())) {
             cout << ".";
             RESTART_COUNTER = 0;
             ++RESTARTS;
+            data.hitLevelZero = false;
             data.phaseSaving = data.assignedVars;
             data.backtrackNodes = data.implicationGraph->getAllNodes();
             data.nonChronologicalBacktracking();
-            preprocess(&data);
+            preprocess2(&data);
         }
         // Logic.
         solveSAT(&data);
@@ -1066,7 +1086,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         cout << "\n";
         sat = true;
     } else {
-        cout << "Formula is UNSAT!" << endl;
+        cout << "\nFORMULA UNSAT!" << endl;
         sat = false;
     }
     if (algorithm == Algorithm::DEFAULT) {
@@ -1101,13 +1121,22 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
            (verifySolution(cnf, solutionCheck) && removeSatisfiedClauses(cnf, solutionCheck).empty());
 }
 
-/* Applies a preprocessing to a data object */
+/* Applies preprocessing to a data object */
 void preprocess(Data *data) {
     eliminateTautologies(data);
     removeUnitClauses(data);
     removePureLiterals(data);
     removeSubsumedClauses(data);
     performResolutionRule(data);
+}
+
+/* Applies preprocessing to a data object */
+void preprocess2(Data *data) {
+    eliminateTautologies(data);
+    removeUnitClauses(data);
+    removePureLiterals(data);
+    // removeSubsumedClauses(data);
+    // performResolutionRule(data);
 }
 
 /* Helper function to read in all files in a given directory. */
@@ -1171,8 +1200,8 @@ int main(int argc, char **argv) {
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = getTestFiles("../inputs/sat");
-    // paths = {"../inputs/sat/aim-200-3_4-yes1-1.cnf"};
-    // paths = {"../inputs/malfunction/sat/ii32e2.cnf"};
+    // paths = {"../inputs/sat/aim-100-1_6-yes1-1.cnf"};
+    // paths = {"../inputs/malfunctioning/unsat/ssa0432-003.cnf.cnf"};
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
@@ -1218,6 +1247,4 @@ int main(int argc, char **argv) {
 
     cout << "\n\nPress any key to exit...";
     getchar();
-
-
 }
