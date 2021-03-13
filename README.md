@@ -36,3 +36,15 @@ Single Directory:
 Up to two Directories:
 
 > SAT_Solver.exe -dir "../inputs/test/sat" "../inputs/test/unsat"
+
+## Generating the plots:
+
+After you have run a Directory of Problem you can generate a plot for the steps and times.
+
+### Steps Plot:
+
+> python plot-steps.py
+
+### Times Plot:
+
+> python plot-times.py
