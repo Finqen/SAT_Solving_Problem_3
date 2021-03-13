@@ -370,8 +370,8 @@ struct Data {
         watchedLiteralToClauseFull.clear();
         clausesRemaining.clear();
         for (int i = 0; i < cnf.size(); ++i) {
-            //if (cnf[i].discarded)
-            //    continue;
+            if (cnf[i].discarded)
+                continue;
             if (reset)
                 cnf[i].clause = cnf[i].originalClause;
             for (auto v : cnf[i].originalClause)
@@ -425,8 +425,8 @@ struct Data {
         int orgSize = implicationGraph->originalCNF.size();
         bool deleteClauses = cnf.size() - orgSize > 2 * orgSize;
         for (int i = orgSize; i < cnf.size(); ++i) {
-            if (deleteClauses && cnf[i].conflictClause && cnf[i].clause.size() > 8 &&
-                float(cnf[i].clause.size()) / cnf[i].originalClause.size() > 0.5) {
+            if (deleteClauses && cnf[i].conflictClause && !cnf[i].discarded && cnf[i].clause.size() > 8 &&
+                float(cnf[i].clause.size()) / cnf[i].originalClause.size() > 0.666) {
                 discardClause(i, false);
             }
         }
@@ -447,8 +447,8 @@ struct Data {
     /* Restores the original clauses. */
     void nonChronologicalBacktracking() {
         if (unsat) return;
-        //while (!resolutions.empty())
-        //    resolutions.pop();
+        // while (!resolutions.empty())
+        //     resolutions.pop();
         set<int> clausesToBacktrack;
         for (auto node : backtrackNodes) {
             // cout << node->literal << " ";
@@ -489,7 +489,7 @@ struct Data {
 
     /* Applies a solution to a clause (i.e removes potential negated literals). */
     void applySolution(Clause *c) {
-        if (falsified || c->originalClause.empty()) return;
+        if (falsified || c->clause.empty()) return;
         for (auto v : assignedVars) {
             if (count(c->clause.begin(), c->clause.end(), v)) {
                 c->clause.clear();
@@ -497,7 +497,7 @@ struct Data {
             }
             c->clause.erase(remove(c->clause.begin(), c->clause.end(), -v), c->clause.end());
             if (c->clause.empty()) {
-                //setFalsified(c);
+                setFalsified(c);
                 cout << "F-APPLY ";
                 unsat = true;
                 return;
@@ -512,8 +512,8 @@ struct Data {
         vector<EntryVMTF *> entries;
         priority_queue<EntryVMTF *, vector<EntryVMTF *>, EntryPointer> priorityQueue;
         for (auto v : implicationGraph->conflictClause) {
-            mappingVMTF[v]->counter += 1;
-            priorityQueue.push(mappingVMTF[v]);
+            mappingVMTF[-v]->counter += 1;
+            priorityQueue.push(mappingVMTF[-v]);
         }
         if (algorithm != Algorithm::Version::HEU_LIT) {
             int n = 0;
@@ -568,14 +568,19 @@ struct Data {
             addSolution(c->clause.front());
     }
 
-    /* Removes a clause from the unsatisfied list, but updates all parameters accordingly. */
+    /* Sets a clasue to nothing */
+    void emptyClause(int index) {
+        cnf[index].clause.clear();
+        for (int v : cnf[index].originalClause)
+            watchedLiteralToClauseFull[abs(v)].erase(index);
+        cnf[index].originalClause.clear();
+    }
+
+/* Removes a clause from the unsatisfied list, but updates all parameters accordingly. */
     void discardClause(int index, bool keep = true) {
         clausesRemaining.erase(index);
         if (!keep) {
-            cnf[index].clause.clear();
-            for (int v : cnf[index].originalClause)
-                watchedLiteralToClauseFull[abs(v)].erase(index);
-            cnf[index].originalClause.clear();
+            emptyClause(index);
         }
         cnf[index].discarded = true;
         for (auto v : cnf[index].clause) {
@@ -686,7 +691,9 @@ struct Data {
             sort(newClause.begin(), newClause.end());
             newClause.erase(unique(newClause.begin(), newClause.end()), newClause.end());
             newClauses.insert(newClause);
+            emptyClause(a);
         }
+        emptyClause(b);
         // Clear literal(s).
         watchedLiteralToClause[-literal].clear();
         watchedLiteralToClause[literal].clear();
@@ -995,7 +1002,8 @@ void solveSAT(Data *data) {
         if (data->phaseSaving.count(-v)) {
             data->phaseSaving.erase(-v);
             v = -v;
-        }
+        } else
+            data->phaseSaving.erase(v);
         // Add literal to solution.
         data->addSolution(v);
         /// PRE-FILTERING:
@@ -1011,6 +1019,7 @@ void solveSAT(Data *data) {
             data->unsat = abs(data->hitLevelZero) == abs(v);
             data->hitLevelZero = abs(v);
         }
+        data->assignedVars.erase(v);
         data->nonChronologicalBacktracking();
     }
 }
@@ -1022,7 +1031,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     srand(unsigned(time(nullptr)));
     cout << "Path: " << path << endl;
     cout << "Algorithm: " << Algorithm::getVersionName(algorithm) << endl;
-    cout << "Generating data structure...";
+    cout << "Generating data structure.";
     vector<Clause> cnf = loadDimacsCnf(path);
     const unordered_set<int> &origVars = getVariables(cnf);
     // cnf = to3SAT(cnf); //Worsens performance!
@@ -1035,13 +1044,15 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     RESTARTS = 0;
     // Logic loop.
     preprocess(&data);
-    cout << "\nSolving";
+    cout << "\nSolving [";
     if (data.falsified)
         data.unsat = true;
     while (!data.canAbort()) {
         // Resetting & full preprocessing.
-        if (RESTART_COUNTER > ((10 + RESTARTS) * implicationGraph.originalCNF.size())) {
-            cout << ".";
+        if ((RESTART_COUNTER + 1) % 200 == 0)
+            cout << "|";
+        if (RESTART_COUNTER > ((1 + RESTARTS) * 850)) {
+            cout << "/";
             RESTART_COUNTER = 0;
             ++RESTARTS;
             data.hitLevelZero = false;
@@ -1054,8 +1065,8 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         solveSAT(&data);
     }
     ////////////////////////////////
+    cout << "]";
     vector<int> solution;
-
     if (!data.unsat) {
         for (int v : data.assignedVars)
             if (origVars.find(v) != origVars.end() || origVars.find(-v) != origVars.end())
@@ -1135,8 +1146,8 @@ void preprocess2(Data *data) {
     eliminateTautologies(data);
     removeUnitClauses(data);
     removePureLiterals(data);
-    // removeSubsumedClauses(data);
-    // performResolutionRule(data);
+    removeSubsumedClauses(data);
+    performResolutionRule(data);
 }
 
 /* Helper function to read in all files in a given directory. */
@@ -1201,7 +1212,7 @@ int main(int argc, char **argv) {
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
     // paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-100-1_6-yes1-1.cnf"};
-    // paths = {"../inputs/malfunctioning/unsat/ssa0432-003.cnf.cnf"};
+    // paths = {"../inputs/sat/ii8d1.cnf"};
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
@@ -1247,8 +1258,8 @@ int main(int argc, char **argv) {
 
     long endTime = (clock() - startingTime);
     int minutes = (int) endTime / CLOCKS_PER_SEC / 60;
-    cout << "\n\n" << minutes << " minutes taken for running " << argv[2];
-    if(argv[3]!=NULL){cout << " and " << argv[3];}
+    cout << "\n\n" << minutes << " min. total execution time." << argv[2];
+    if (argv[3] != NULL) { cout << " and " << argv[3]; }
     cout << "\n\nPress any key to exit...";
     getchar();
 }
