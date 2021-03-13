@@ -1051,7 +1051,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         // Resetting & full preprocessing.
         if ((RESTART_COUNTER + 1) % 200 == 0)
             cout << "|";
-        if (RESTART_COUNTER > ((1 + RESTARTS) * 850)) {
+        if (RESTART_COUNTER > ((1 + RESTARTS) * 1000)) {
             cout << "/";
             RESTART_COUNTER = 0;
             ++RESTARTS;
