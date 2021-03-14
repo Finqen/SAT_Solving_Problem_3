@@ -48,5 +48,7 @@ After you have run a Directory of Problem you can generate a plot for the steps 
 > python plot-times.py
 
 ## Results:
+The total run time was app. **31 min** for all ** 172 files** (in "inputs/test_all").
+![alt text](cactus-times_test_full.png "Title")
 
-
+We see that most (>90%) SAT formulas were even solved in matter of seconds.
