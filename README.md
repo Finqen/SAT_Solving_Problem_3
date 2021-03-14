@@ -35,6 +35,13 @@ Up to two Directories:
 
 > SAT_Solver.exe -dir "../inputs/test/sat" "../inputs/test/unsat"
 
+### Proof
+
+To generate **.drup** files for proof logging and verifying **with drat-trim** just add the *"proof"* tag:
+
+> SAT_Solver.exe -dir "../inputs/test_all" proof
+
+
 ## Generating the plots:
 
 After you have run a Directory of Problem you can generate a plot for the steps and times.
