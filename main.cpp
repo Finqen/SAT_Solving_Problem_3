@@ -32,10 +32,10 @@ bool proof = false;
 /* Namespace to define variations of algorithms that bundles names as access points */
 namespace Algorithm {
     enum Version {
-        DEFAULT, HEU_LIT, NO_AUT, NO_PREP, PS
+        DEFAULT, HEU_LIT, AUT, NO_PREP, PS
     };
     // All: Contains all variants
-    static const Version All[] = {DEFAULT, NO_AUT, HEU_LIT};
+    static const Version All[] = {DEFAULT, AUT, HEU_LIT};
     // Contains only the default variant
     static const Version Default[] = {DEFAULT};
     static const Version NoPP[] = {NO_PREP};
@@ -48,8 +48,8 @@ namespace Algorithm {
                 return "Heuristic VMTF";
             case HEU_LIT:
                 return "Heuristic Literals";
-            case NO_AUT:
-                return "Not Autartic";
+            case AUT:
+                return "Autartic";
             case PS:
                 return "Phase Saving";
             case NO_PREP:
@@ -980,7 +980,7 @@ void solveSAT(Data *data) {
     removeUnitClauses(data);
     if (!data->falsified && !data->unassignedVars.empty()) {
         //////////////////////////  AUTARKIC CLAUSES TRICK  //////////////////////////
-        if (data->algorithm != Algorithm::Version::NO_AUT) {
+        if (data->algorithm == Algorithm::Version::AUT) {
             vector<Clause> cnf;
             cnf = sortUnsatClausesVariables(data);
             Clause nextClause = getSmallestClause(cnf);
@@ -1189,6 +1189,7 @@ int main(int argc, char **argv) {
     vector<string> paths2;
     vector<string> paths3;
 
+    /*
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "proof") == 0) {
             proof = true;
@@ -1214,15 +1215,16 @@ int main(int argc, char **argv) {
         }
 
     }
-
+    */
     // paths = getTestFiles("../inputs/test/sat");
     // paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
-    // paths = getTestFiles("../inputs/sat");
+    paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-100-1_6-yes1-1.cnf"};
     // paths = {"../inputs/sat/ii8d1.cnf"};
-    // paths = {"../inputs/sat/ii8e2.cnf"};
+    // paths = {"../inputs/malfunction/sat/par16-1-c.cnf"};
+    //paths = getTestFiles("../inputs/malfunction/sat");
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
