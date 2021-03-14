@@ -1215,8 +1215,8 @@ int main(int argc, char **argv) {
 
     }
 
-    // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
-    // paths = getTestFiles("../inputs/malfunction/test_all");
+    // paths = {"../inputs/test_all/par16-1-c.cnf"};
+    // paths = getTestFiles("../inputs/test_all");
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
