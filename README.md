@@ -16,6 +16,8 @@ and, thus, slowed down the CDCL algorithm crucially.
 For that reason, in order to generate the plots some of the above mentioned problem types were moved
 to a different folder (named "malfunction").
 
+We have also noticed that different hyperparameters & heuristics performed differently well on different problems.
+
 ## Running the program:
 
 ### Files
