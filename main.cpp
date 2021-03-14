@@ -1044,14 +1044,14 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     RESTARTS = 0;
     // Logic loop.
     preprocess(&data);
-    cout << "\nSolving [";
+    cout << "\nSolving <";
     if (data.falsified)
         data.unsat = true;
     while (!data.canAbort()) {
         // Resetting & full preprocessing.
         if ((RESTART_COUNTER + 1) % 200 == 0)
             cout << "|";
-        if (RESTART_COUNTER > ((1 + RESTARTS) * 1000)) {
+        if (RESTART_COUNTER > ((1 + RESTARTS) + origVars.size())) {
             cout << "/";
             RESTART_COUNTER = 0;
             ++RESTARTS;
@@ -1065,7 +1065,7 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
         solveSAT(&data);
     }
     ////////////////////////////////
-    cout << "]";
+    cout << ">";
     vector<int> solution;
     if (!data.unsat) {
         for (int v : data.assignedVars)
@@ -1213,6 +1213,7 @@ int main(int argc, char **argv) {
     // paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-100-1_6-yes1-1.cnf"};
     // paths = {"../inputs/sat/ii8d1.cnf"};
+    // paths = {"../inputs/sat/ii8e2.cnf"};
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
