@@ -468,8 +468,8 @@ struct Data {
         //updateClauseInformation(true);
     }
 
-    /* Returns true if unsat or sat.
-     * A function is set to be sat if clausesRemaining.empty is true, that is, if all
+    /* Returns true if unsat or test_all.
+     * A function is set to be test_all if clausesRemaining.empty is true, that is, if all
      * clauses are satisfied */
     bool canAbort() const {
         return unsat || clausesRemaining.empty();
@@ -974,7 +974,7 @@ int heuristicFixedOrder(Data *data) {
     return v;
 }
 
-/* Main logic of the sat solver; used for recursion. */
+/* Main logic of the test_all solver; used for recursion. */
 void solveSAT(Data *data) {
     int v;
     removeUnitClauses(data);
@@ -1031,7 +1031,7 @@ void solveSAT(Data *data) {
     }
 }
 
-/* Starts the recursive sat-solver calls and sotres data accordingly in files. */
+/* Starts the recursive test_all-solver calls and sotres data accordingly in files. */
 int solveDimacs(const string &path, Algorithm::Version algorithm) {
     bool sat;
     clock_t tStart = clock();
@@ -1215,15 +1215,8 @@ int main(int argc, char **argv) {
 
     }
 
-    // paths = getTestFiles("../inputs/test/sat");
-    // paths2 = getTestFiles("../inputs/test/unsat");
-    // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
-    // paths = getTestFiles("../inputs/sat");
-    // paths = {"../inputs/sat/aim-100-1_6-yes1-1.cnf"};
-    // paths = {"../inputs/sat/ii8d1.cnf"};
-    // paths = {"../inputs/malfunction/sat/par16-1-c.cnf"};
-    //paths = getTestFiles("../inputs/malfunction/sat");
+    // paths = getTestFiles("../inputs/malfunction/test_all");
 
     bool correct = true;
     for (int i = 0; i < paths.size(); ++i) {
