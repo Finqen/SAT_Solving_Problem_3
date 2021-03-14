@@ -18,7 +18,7 @@ df_steps = df_steps.transpose()
 
 sns_plot_steps = sns.lineplot(data=df_steps, markers=True, dashes=False)
 
-sns_plot_steps.set(xlabel='Problems solved', ylabel='Steps', xticks=[2*i for i in range((1+len(a[0]))//2)])
+sns_plot_steps.set(xlabel='Problems solved', ylabel='Steps', xticks=[0,25,50,75,100,125,150])
 
 fiugre_steps = sns_plot_steps.get_figure()
 

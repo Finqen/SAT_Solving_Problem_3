@@ -18,7 +18,7 @@ df_times.replace(a)
 df_times = df_times.transpose() / 60000
 
 sns_plot_times = sns.lineplot(data=df_times, markers=True, dashes=False)
-sns_plot_times.set(xlabel='Problems solved', ylabel='Cumulative computation time [min]', xticks=[2*i for i in range((1+len(a[0]))//2)])
+sns_plot_times.set(xlabel='Problems solved', ylabel='Cumulative computation time [min]', xticks=[0,25,50,75,100,125,150])
 
 fiugre_times = sns_plot_times.get_figure()
 
