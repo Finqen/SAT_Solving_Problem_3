@@ -4,31 +4,32 @@
 
 We implemented all mandatory and optional (bonus) tasks. Our algorithm successfully solves most problems
 within the time frame of 1min, and often even in matter of seconds, which we are very proud of.
-However, we want to explicitly mention the fact that the following two problem types listed below could
-*not* be solved properly:
+However, we want to explicitly mention the fact that the following problem types listed below could
+*not* be solved efficiently:
 
 SAT: ii16, ii32, ii8, par
 UNSAT: hole8/9
 
-A main problem was that those problems with over 20.000 clauses had a notably deterimental effect on the performance
-and, thus, slowed down the CDCL algorithm crucially.
-
-For that reason, in order to generate the plots some of the above mentioned problem types were moved
+A main problem was that problems with over 20.000 clauses slowed down the CDCL algorithm due to implementation 
+limitations. For that reason, in order to generate the plots some of the above mentioned problem types were moved
 to a different folder (named "malfunction").
 
-We have also noticed that different hyperparameters & heuristics performed differently well on different problems.
+Still, we optimized our algorithm to solve the very vast (!) majority of the provided SAT problems lightning fast 
+(in matter of milliseconds). We have noticed that different hyperparameters & heuristics performed differently well on different problems.
+
+We added an option to generate UNSAT proofs (for verification purposes). 
 
 ## Running the program:
 
 ### Files
 
-> $ SAT_Solver.exe -file "../inputs/test/sat/unit.cnf"
+> $ SAT_Solver.exe -file "../inputs/test_all/unit.cnf"
 
 ### Directories
 
 Single Directory:
 
-> SAT_Solver.exe -dir "../inputs/test/sat" "../inputs/test/unsat"
+> SAT_Solver.exe -dir "../inputs/test_all"
 
 Up to two Directories:
 
