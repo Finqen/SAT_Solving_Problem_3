@@ -23,7 +23,7 @@ Finally, we added an option to generate UNSAT proofs (for verification purposes)
 
 ### Files
 
-> $ SAT_Solver.exe -file "../inputs/test_all/unit.cnf"
+> SAT_Solver.exe -file "../inputs/test_all/unit.cnf"
 
 ### Directories
 
