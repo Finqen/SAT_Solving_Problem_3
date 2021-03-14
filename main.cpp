@@ -1189,7 +1189,6 @@ int main(int argc, char **argv) {
     vector<string> paths2;
     vector<string> paths3;
 
-    /*
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "proof") == 0) {
             proof = true;
@@ -1215,12 +1214,12 @@ int main(int argc, char **argv) {
         }
 
     }
-    */
+
     // paths = getTestFiles("../inputs/test/sat");
     // paths2 = getTestFiles("../inputs/test/unsat");
     // paths = getTestFiles("../inputs/test/more_complex_tests");
     // paths = {"../inputs/test/more_complex_tests/uf50-010.cnf"};
-    paths = getTestFiles("../inputs/sat");
+    // paths = getTestFiles("../inputs/sat");
     // paths = {"../inputs/sat/aim-100-1_6-yes1-1.cnf"};
     // paths = {"../inputs/sat/ii8d1.cnf"};
     // paths = {"../inputs/malfunction/sat/par16-1-c.cnf"};
