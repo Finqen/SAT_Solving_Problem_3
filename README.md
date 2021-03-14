@@ -10,14 +10,14 @@ However, we want to explicitly mention the fact that the following problem types
 SAT: ii16, ii32, ii8, par
 UNSAT: hole8/9
 
-A main problem was that problems with over 20.000 clauses slowed down the CDCL algorithm due to implementation 
+A main issues was that problems with over 20.000 clauses slowed down the CDCL algorithm logic due to implementation 
 limitations. For that reason, in order to generate the plots some of the above mentioned problem types were moved
 to a different folder (named "malfunction").
 
-Still, we optimized our algorithm to solve the very vast (!) majority of the provided SAT problems lightning fast 
+Still, we optimized our algorithm to solve the very vast (!) majority of the provided SAT problems quick 
 (in matter of milliseconds). We have noticed that different hyperparameters & heuristics performed differently well on different problems.
 
-We added an option to generate UNSAT proofs (for verification purposes). 
+Finally, we added an option to generate UNSAT proofs (for verification purposes). 
 
 ## Running the program:
 
