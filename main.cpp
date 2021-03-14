@@ -355,7 +355,8 @@ struct Data {
     unordered_map<int, set<int>> watchedLiteralToClauseFull;
     bool falsified = false;
     bool unsat = false;
-    int hitLevelZero = 0;
+    int hitLevelZeroLit = 0;
+    int hitLevelZeroCount = 0;
     Algorithm::Version algorithm;
     map<int, EntryVMTF *> mappingVMTF;
     vector<EntryVMTF *> vmtf;
@@ -392,8 +393,9 @@ struct Data {
     }
 
     /* Resets the data object */
-    void reset() {
-        updateClauseInformation();
+    void updateVMTF() {
+        vmtf.clear();
+        fixedOrder.clear();
         vector<EntryVMTF *> vars;
         for (auto var : unassignedVars) {
             int c = getLiteralCount(-var) * getLiteralCount(var);
@@ -415,7 +417,8 @@ struct Data {
         this->implicationGraph = implicationGraph;
         this->cnf = implicationGraph->originalCNF;
         this->algorithm = algorithm;
-        reset();
+        updateClauseInformation();
+        updateVMTF();
     }
 
     /* Delete added conflict clauses with <50% assigned vars and more than 8 vars
@@ -426,7 +429,7 @@ struct Data {
         bool deleteClauses = cnf.size() - orgSize > 2 * orgSize;
         for (int i = orgSize; i < cnf.size(); ++i) {
             if (deleteClauses && cnf[i].conflictClause && !cnf[i].discarded && cnf[i].clause.size() > 8 &&
-                float(cnf[i].clause.size()) / cnf[i].originalClause.size() > 0.666) {
+                float(cnf[i].clause.size()) / cnf[i].originalClause.size() > 0.55) {
                 discardClause(i, false);
             }
         }
@@ -1016,8 +1019,12 @@ void solveSAT(Data *data) {
         ++RESTART_COUNTER;
         // cout << "[" << data->implicationGraph->assertionLevel << "]";
         if (data->implicationGraph->assertionLevel == 0) {
-            data->unsat = abs(data->hitLevelZero) == abs(v);
-            data->hitLevelZero = abs(v);
+            if (abs(data->hitLevelZeroLit) == abs(v))
+                data->hitLevelZeroCount += 1;
+            else
+                data->hitLevelZeroCount = 0;
+            data->hitLevelZeroLit = abs(v);
+            data->unsat = data->hitLevelZeroCount > 2;
         }
         data->assignedVars.erase(v);
         data->nonChronologicalBacktracking();
@@ -1047,15 +1054,17 @@ int solveDimacs(const string &path, Algorithm::Version algorithm) {
     cout << "\nSolving <";
     if (data.falsified)
         data.unsat = true;
+    int m = 200;
+    int k = max(m, min(int(origVars.size()), int(implicationGraph.originalCNF.size())));
     while (!data.canAbort()) {
         // Resetting & full preprocessing.
-        if ((RESTART_COUNTER + 1) % 200 == 0)
+        if ((RESTART_COUNTER + 1) % m == 0)
             cout << "|";
-        if (RESTART_COUNTER > ((1 + RESTARTS) + origVars.size())) {
+        if (RESTART_COUNTER > ((m * RESTARTS) + k)) {
             cout << "/";
             RESTART_COUNTER = 0;
             ++RESTARTS;
-            data.hitLevelZero = false;
+            data.hitLevelZeroLit = false;
             data.phaseSaving = data.assignedVars;
             data.backtrackNodes = data.implicationGraph->getAllNodes();
             data.nonChronologicalBacktracking();
